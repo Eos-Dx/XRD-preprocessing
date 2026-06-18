@@ -1,0 +1,212 @@
+import numpy as np
+import pandas as pd
+import pytest
+
+from xrd_preprocessing import AzimuthalIntegration, perform_azimuthal_integration
+
+
+def fake_poni() -> str:
+    return """# Fake PONI for tests
+poni_version: 2.1
+Detector: Detector
+Detector_config: {"pixel1": 0.0001, "pixel2": 0.0001, "max_shape": [16, 16], "orientation": 3}
+Distance: 0.1
+Poni1: 0.0008
+Poni2: 0.0008
+Rot1: 0
+Rot2: 0
+Rot3: 0
+Wavelength: 1e-10
+"""
+
+
+def fake_custom_detector_poni() -> str:
+    return fake_poni().replace("Detector: Detector", "Detector: Ash512x768")
+
+
+def fake_image() -> np.ndarray:
+    y, x = np.indices((16, 16))
+    return (np.exp(-((x - 8) ** 2 + (y - 8) ** 2) / 20.0) + 0.1).astype(np.float32)
+
+
+def test_perform_azimuthal_integration_fake_poni_image():
+    row = pd.Series(
+        {
+            "measurement_data": fake_image(),
+            "ponifile": fake_poni(),
+            "interpolation_q_range": None,
+            "azimuthal_range": None,
+            "sample_thickness_mm": 11.0,
+        }
+    )
+    radial, intensity, sigma, distance = perform_azimuthal_integration(
+        row,
+        npt=32,
+        calibration_mode="poni",
+        thickness_reference_mm=11.0,
+    )
+
+    assert radial.shape == (32,)
+    assert intensity.shape == (32,)
+    assert sigma is None
+    assert distance == 0.1
+    assert np.isfinite(intensity).all()
+
+
+def test_azimuthal_integration_transform_fake_poni_image():
+    df = pd.DataFrame(
+        {
+            "measurement_data": [fake_image()],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+            "sample_thickness_mm": [11.0],
+        }
+    )
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        thickness_reference_mm=11.0,
+    ).fit_transform(df)
+
+    assert out["q_range"].iloc[0].shape == (32,)
+    assert out["radial_profile_data"].iloc[0].shape == (32,)
+    assert out["radial_profile_sigma"].iloc[0] is None
+    assert out["calculated_distance"].iloc[0] == 0.1
+    assert bool(out["thickness_adjustment_applied"].iloc[0]) is True
+    assert bool(out["thickness_adjustment_reliable"].iloc[0]) is True
+
+
+def test_azimuthal_integration_unknown_detector_name_uses_detector_config():
+    row = pd.Series(
+        {
+            "measurement_data": fake_image(),
+            "ponifile": fake_custom_detector_poni(),
+            "interpolation_q_range": None,
+            "azimuthal_range": None,
+            "sample_thickness_mm": 11.0,
+        }
+    )
+
+    radial, intensity, sigma, distance = perform_azimuthal_integration(
+        row,
+        npt=32,
+        calibration_mode="poni",
+        thickness_reference_mm=11.0,
+    )
+
+    assert radial.shape == (32,)
+    assert intensity.shape == (32,)
+    assert sigma is None
+    assert distance == 0.1
+    assert np.isfinite(intensity).all()
+
+
+def test_azimuthal_integration_uses_row_mask_column():
+    image = fake_image()
+    df = pd.DataFrame(
+        {
+            "measurement_data": [image],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+            "pyfai_faulty_pixel_mask": [np.zeros_like(image, dtype=np.uint8)],
+            "sample_thickness_mm": [11.0],
+        }
+    )
+    df["pyfai_faulty_pixel_mask"].iloc[0][8, 8] = 1
+
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        mask_column="pyfai_faulty_pixel_mask",
+        thickness_reference_mm=11.0,
+    ).fit_transform(df)
+
+    assert out["q_range"].iloc[0].shape == (32,)
+    assert np.isfinite(out["radial_profile_data"].iloc[0]).all()
+    assert out["azimuthal_mask_source"].iloc[0] == "pyfai_faulty_pixel_mask"
+    assert out["azimuthal_mask_pixels"].iloc[0] == 1
+
+
+def test_azimuthal_integration_keeps_per_row_mask_counts():
+    image = fake_image()
+    masks = [np.zeros_like(image, dtype=np.uint8), np.zeros_like(image, dtype=np.uint8)]
+    masks[0][8, 8] = 1
+    masks[1][8, 8] = 1
+    masks[1][8, 9] = 1
+    df = pd.DataFrame(
+        {
+            "measurement_data": [image, image],
+            "ponifile": [fake_poni(), fake_poni()],
+            "interpolation_q_range": [None, None],
+            "azimuthal_range": [None, None],
+            "pyfai_faulty_pixel_mask": masks,
+            "sample_thickness_mm": [11.0, 11.0],
+        }
+    )
+
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        mask_column="pyfai_faulty_pixel_mask",
+        thickness_reference_mm=11.0,
+    ).fit_transform(df)
+
+    assert out["azimuthal_mask_pixels"].tolist() == [1, 2]
+
+
+def test_azimuthal_integration_missing_thickness_raises():
+    df = pd.DataFrame(
+        {
+            "measurement_data": [fake_image()],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+        }
+    )
+
+    with pytest.raises(ValueError, match="thickness_reference_mm must be set explicitly"):
+        AzimuthalIntegration(npt=32, calibration_mode="poni").fit_transform(df)
+
+
+def test_azimuthal_integration_missing_sample_thickness_raises():
+    df = pd.DataFrame(
+        {
+            "measurement_data": [fake_image()],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Missing required thickness column: sample_thickness_mm"):
+        AzimuthalIntegration(
+            npt=32,
+            calibration_mode="poni",
+            thickness_reference_mm=11.0,
+        ).fit_transform(df)
+
+
+def test_azimuthal_integration_applies_thickness_to_poni_distance():
+    df = pd.DataFrame(
+        {
+            "measurement_data": [fake_image()],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+            "sample_thickness_mm": [25.0],
+        }
+    )
+
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        thickness_reference_mm=11.0,
+    ).fit_transform(df)
+
+    assert bool(out["thickness_adjustment_applied"].iloc[0]) is True
+    assert bool(out["thickness_adjustment_reliable"].iloc[0]) is True
+    assert out["sample_thickness_mm"].iloc[0] == 25.0
+    assert out["thickness_reference_mm"].iloc[0] == 11.0
+    assert out["calculated_distance"].iloc[0] == pytest.approx(0.093)
