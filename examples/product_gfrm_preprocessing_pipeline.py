@@ -42,7 +42,10 @@ def _():
 
     from xrd_preprocessing import (
         AzimuthalIntegration,
+        ColumnValueFilter,
         FaultyPixelDetector,
+        MetadataFilter,
+        PatientSpecimenValidityFilter,
         QRangeNormalizer,
         RadialProfileSnapshot,
         SNRFilter,
@@ -51,7 +54,10 @@ def _():
 
     return (
         AzimuthalIntegration,
+        ColumnValueFilter,
         FaultyPixelDetector,
+        MetadataFilter,
+        PatientSpecimenValidityFilter,
         Pipeline,
         QRangeNormalizer,
         RadialProfileSnapshot,
@@ -74,10 +80,12 @@ def _(mo):
 
     ```text
     GFRM -> photons -> DataFrame with sample_thickness_mm
+    -> date and diagnosis filters
     -> FaultyPixelDetector
     -> AzimuthalIntegration, q = 2..23 nm^-1
     -> SNRTransformer
     -> SNRFilter
+    -> PatientSpecimenValidityFilter
     -> QRangeNormalizer
     ```
 
@@ -99,6 +107,15 @@ def _(helpers, repo_root, thickness_reference_mm):
         repo_root=repo_root,
         thickness_reference_mm=thickness_reference_mm,
     )
+    input_df["measurementDate"] = "2026-06-08"
+    input_df["diagnosis"] = "BENIGN"
+    input_df["patientId"] = [
+        f"demo_patient_{_idx // 6 + 1:02d}" for _idx in range(len(input_df))
+    ]
+    input_df["specimenId"] = [
+        f"{_patient_id}_specimen_{(_idx // 3) % 2 + 1}"
+        for _idx, _patient_id in enumerate(input_df["patientId"])
+    ]
     return (input_df,)
 
 
@@ -111,7 +128,8 @@ def _(input_df, mo, thickness_reference_mm):
 
         Each Bruker GFRM frame was decoded with FabIO and converted to EOS
         photon estimates. The DataFrame already contains the required
-        `sample_thickness_mm` column.
+        `sample_thickness_mm` column. This example adds demo clinical metadata
+        columns so the product filters can be demonstrated.
 
         ```text
         frames = {len(input_df)}
@@ -119,6 +137,7 @@ def _(input_df, mo, thickness_reference_mm):
         thickness_reference_mm = {thickness_reference_mm}
         sample_thickness_mm values = {_thickness_values}
         measurement_data source = RAW GFRM -> gfrm_to_photons
+        clinical columns = measurementDate, diagnosis, patientId, specimenId
         ```
         """
     )
@@ -126,12 +145,53 @@ def _(input_df, mo, thickness_reference_mm):
 
 
 @app.cell
-def _(FaultyPixelDetector, input_df):
+def _(ColumnValueFilter, MetadataFilter, input_df):
+    trusted_date_filter = ColumnValueFilter(
+        "measurementDate",
+        op="date>=",
+        value="2026-06-01",
+    )
+    diagnosis_filter = MetadataFilter(
+        "diagnosis",
+        op="in",
+        values=["BENIGN", "CANCER"],
+    )
+    date_filtered_df = trusted_date_filter.fit_transform(input_df)
+    cohort_df = diagnosis_filter.fit_transform(date_filtered_df)
+    early_filter_stats = {
+        "date": trusted_date_filter.stats_,
+        "diagnosis": diagnosis_filter.stats_,
+    }
+    return cohort_df, early_filter_stats
+
+
+@app.cell
+def _(cohort_df, early_filter_stats, mo):
+    mo.md(
+        f"""
+        Step 2. Early metadata filtering.
+
+        Date filtering is applied immediately after DataFrame creation because
+        data before trusted protocol dates must not enter image processing.
+        Diagnosis filtering defines the product cohort.
+
+        ```text
+        date rows in/pass = {early_filter_stats["date"]["rows_in"]}/{early_filter_stats["date"]["rows_pass"]}
+        diagnosis rows in/pass = {early_filter_stats["diagnosis"]["rows_in"]}/{early_filter_stats["diagnosis"]["rows_pass"]}
+        rows after early filters = {len(cohort_df)}
+        ```
+        """
+    )
+    return
+
+
+@app.cell
+def _(FaultyPixelDetector, cohort_df):
     faulty_detector = FaultyPixelDetector(
         local_hot_min_value=500.0,
         exclude_beam_center_radius=0.04,
     )
-    faulty_df = faulty_detector.fit_transform(input_df)
+    faulty_df = faulty_detector.fit_transform(cohort_df)
     faulty_stats = faulty_detector.stats_
     return faulty_df, faulty_stats
 
@@ -143,7 +203,7 @@ def _(faulty_df, faulty_stats, helpers, mo):
         [
             mo.md(
                 f"""
-                Step 2. Faulty-pixel detection.
+                Step 3. Faulty-pixel detection.
 
                 NaN/inf, negative values, and values above 500 are excluded.
                 Beam-zone pixels are not counted as faulty pixels.
@@ -185,7 +245,7 @@ def _(helpers, integrated_df, mo):
     mo.vstack(
         [
             mo.md("""
-            Step 3. Azimuthal integration.
+            Step 4. Azimuthal integration.
 
             The pyFAI integrator uses PONI geometry. The faulty-pixel mask is
             passed per row. Integration range is q = 2..23 nm^-1.
@@ -214,7 +274,7 @@ def _(helpers, mo, snr_df):
     mo.vstack(
         [
             mo.md("""
-            Step 4. Poisson SNR analysis.
+            Step 5. Poisson SNR analysis.
 
             `radial_profile_sigma` from pyFAI is used to calculate SNR in dB.
             The profile legend and bar labels show SNR for every curve.
@@ -245,7 +305,7 @@ def _(helpers, mo, snr_filter_stats, snr_filtered_df):
         [
             mo.md(
                 f"""
-                Step 5. SNR filtering.
+                Step 6. SNR filtering.
 
                 Curves with `snr_db < 20` or missing SNR are removed.
 
@@ -264,13 +324,55 @@ def _(helpers, mo, snr_filter_stats, snr_filtered_df):
 
 
 @app.cell
-def _(QRangeNormalizer, snr_filtered_df):
+def _(PatientSpecimenValidityFilter, snr_filtered_df):
+    clinical_validity_filter = PatientSpecimenValidityFilter(
+        min_measurements_per_specimen=2,
+        min_specimens_per_patient=1,
+    )
+    clinically_valid_df = clinical_validity_filter.fit_transform(snr_filtered_df)
+    clinical_validity_stats = clinical_validity_filter.stats_
+    return clinical_validity_stats, clinically_valid_df
+
+
+@app.cell
+def _(clinical_validity_stats, clinically_valid_df, helpers, mo):
+    _fig = helpers.plot_profiles(
+        clinically_valid_df,
+        title="After patient/specimen validity filtering",
+        show_snr=True,
+    )
+    mo.vstack(
+        [
+            mo.md(
+                f"""
+                Step 7. Patient/specimen validity filtering.
+
+                This runs after SNR filtering, so specimen measurement counts
+                are based only on profiles that survived signal-quality QC.
+
+                ```text
+                rows_in = {clinical_validity_stats["rows_in"]}
+                rows_pass = {clinical_validity_stats["rows_pass"]}
+                rows_fail = {clinical_validity_stats["rows_fail"]}
+                patients_pass = {clinical_validity_stats["patients_pass"]}
+                specimens_pass = {clinical_validity_stats["specimens_pass"]}
+                ```
+                """
+            ),
+            mo.as_html(_fig),
+        ]
+    )
+    return
+
+
+@app.cell
+def _(QRangeNormalizer, clinically_valid_df):
     normalizer = QRangeNormalizer(
         q_min=6.7,
         q_max=7.1,
         save_initial_data=True,
     )
-    normalized_df = normalizer.fit_transform(snr_filtered_df)
+    normalized_df = normalizer.fit_transform(clinically_valid_df)
     return (normalized_df,)
 
 
@@ -284,7 +386,7 @@ def _(helpers, mo, normalized_df):
     mo.vstack(
         [
             mo.md("""
-            Step 6. Q-range normalization.
+            Step 8. Q-range normalization.
 
             Remaining curves are normalized by the integrated area in
             q = 6.7..7.1 nm^-1 and plotted together.
@@ -320,7 +422,10 @@ def _(mo, normalized_df):
 @app.cell
 def _(
     AzimuthalIntegration,
+    ColumnValueFilter,
     FaultyPixelDetector,
+    MetadataFilter,
+    PatientSpecimenValidityFilter,
     Pipeline,
     QRangeNormalizer,
     RadialProfileSnapshot,
@@ -333,6 +438,14 @@ def _(
     save_pipeline_stages = True
     product_pipeline = Pipeline(
         [
+            (
+                "trusted_date",
+                ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01"),
+            ),
+            (
+                "diagnosis",
+                MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"]),
+            ),
             (
                 "faulty_pixels",
                 FaultyPixelDetector(
@@ -365,9 +478,16 @@ def _(
             ),
             ("snr_filter", SNRFilter(min_snr_db=20.0)),
             (
-                "snapshot_after_snr_filter",
+                "clinical_validity",
+                PatientSpecimenValidityFilter(
+                    min_measurements_per_specimen=2,
+                    min_specimens_per_patient=1,
+                ),
+            ),
+            (
+                "snapshot_after_clinical_validity",
                 RadialProfileSnapshot(
-                    "after_snr_filter",
+                    "after_clinical_validity",
                     enabled=save_pipeline_stages,
                 ),
             ),
@@ -390,11 +510,27 @@ def _(
     )
     full_pipeline_df = product_pipeline.fit_transform(input_df)
     full_pipeline_stats = product_pipeline.named_steps["snr_filter"].stats_
-    return full_pipeline_df, full_pipeline_stats, product_pipeline, save_pipeline_stages
+    full_pipeline_clinical_stats = product_pipeline.named_steps[
+        "clinical_validity"
+    ].stats_
+    return (
+        full_pipeline_clinical_stats,
+        full_pipeline_df,
+        full_pipeline_stats,
+        product_pipeline,
+        save_pipeline_stages,
+    )
 
 
 @app.cell
-def _(full_pipeline_df, full_pipeline_stats, helpers, mo, save_pipeline_stages):
+def _(
+    full_pipeline_clinical_stats,
+    full_pipeline_df,
+    full_pipeline_stats,
+    helpers,
+    mo,
+    save_pipeline_stages,
+):
     _snapshot_columns = [
         _column
         for _column in full_pipeline_df.columns
@@ -417,9 +553,11 @@ def _(full_pipeline_df, full_pipeline_stats, helpers, mo, save_pipeline_stages):
 
                 ```text
                 save_pipeline_stages = {save_pipeline_stages}
-                input rows = {full_pipeline_stats["rows_in"]}
-                output rows = {len(full_pipeline_df)}
+                rows before SNRFilter = {full_pipeline_stats["rows_in"]}
                 rows removed by SNRFilter = {full_pipeline_stats["rows_fail"]}
+                rows before clinical validity = {full_pipeline_clinical_stats["rows_in"]}
+                rows removed by clinical validity = {full_pipeline_clinical_stats["rows_fail"]}
+                output rows = {len(full_pipeline_df)}
                 saved stage columns = {_snapshot_columns}
                 ```
                 """

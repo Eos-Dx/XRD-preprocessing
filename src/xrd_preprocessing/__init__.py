@@ -1,7 +1,13 @@
 """Lightweight XRD preprocessing API."""
 
 from .azimuthal import AzimuthalIntegration, perform_azimuthal_integration
-from .filters import ColumnValueFilter, MetadataFilter, PatientFilter, SNRFilter
+from .filters import (
+    ColumnValueFilter,
+    MetadataFilter,
+    PatientFilter,
+    PatientSpecimenValidityFilter,
+    SNRFilter,
+)
 from .h5 import h5_to_df
 from .faulty_pixels import (
     FAULTY_REASON_CODES,
@@ -46,6 +52,7 @@ __all__ = [
     "HotPixelDetector",
     "MetadataFilter",
     "PatientFilter",
+    "PatientSpecimenValidityFilter",
     "QRangeNormalizer",
     "RadialProfileSnapshot",
     "SNRFilter",

@@ -14,11 +14,13 @@ Standard product preprocessing order:
 
 ```text
 h5_to_df
--> PatientFilter
+-> ColumnValueFilter(date cutoff)
+-> MetadataFilter(diagnosis cohort)
 -> FaultyPixelDetector
 -> AzimuthalIntegration(error_model="poisson", thickness_reference_mm=<explicit float>)
 -> SNRTransformer(snr_method="poisson")
 -> SNRFilter(min_snr_db=20.0)
+-> PatientSpecimenValidityFilter
 -> QRangeNormalizer(q_min=6.7, q_max=7.1)
 ```
 

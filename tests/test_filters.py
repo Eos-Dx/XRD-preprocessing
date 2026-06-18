@@ -3,7 +3,13 @@ import pytest
 
 from sklearn.pipeline import Pipeline
 
-from xrd_preprocessing import ColumnValueFilter, MetadataFilter, PatientFilter, SNRFilter
+from xrd_preprocessing import (
+    ColumnValueFilter,
+    MetadataFilter,
+    PatientFilter,
+    PatientSpecimenValidityFilter,
+    SNRFilter,
+)
 
 
 def test_column_value_filter_keeps_allowed_metadata_values():
@@ -41,6 +47,23 @@ def test_column_value_filter_between_and_contains():
 
     assert between.transform(df)["sample_id"].tolist() == ["b"]
     assert contains.transform(df)["sample_id"].tolist() == ["b"]
+
+
+def test_column_value_filter_date_cutoff():
+    df = pd.DataFrame(
+        {
+            "sample_id": ["old", "edge", "new", "bad"],
+            "measurementDate": ["2026-01-10", "2026-06-01", "2026-06-02", None],
+        }
+    )
+
+    out = ColumnValueFilter(
+        "measurementDate",
+        op="date>=",
+        value="2026-06-01",
+    ).transform(df)
+
+    assert out["sample_id"].tolist() == ["edge", "new"]
 
 
 def test_metadata_filter_is_one_column_alias():
@@ -133,3 +156,63 @@ def test_snr_filter_default_column_is_snr_db():
 
     assert out["sample_id"].tolist() == ["ok"]
     assert SNRFilter().snr_column == "snr_db"
+
+
+def test_patient_specimen_validity_filter_keeps_specimens_with_two_measurements():
+    df = pd.DataFrame(
+        {
+            "patientId": ["p1", "p1", "p1", "p2"],
+            "specimenId": ["left", "left", "right", "left"],
+            "scan_id": ["a", "b", "c", "d"],
+        }
+    )
+
+    filt = PatientSpecimenValidityFilter()
+    out = filt.transform(df)
+
+    assert out["scan_id"].tolist() == ["a", "b"]
+    assert out["specimen_measurement_count"].tolist() == [2, 2]
+    assert out["patient_valid_specimen_count"].tolist() == [1, 1]
+    assert filt.stats_["rows_in"] == 4
+    assert filt.stats_["rows_pass"] == 2
+
+
+def test_patient_specimen_validity_filter_can_require_two_specimens_per_patient():
+    df = pd.DataFrame(
+        {
+            "patientId": ["p1", "p1", "p1", "p1", "p2", "p2"],
+            "specimenId": ["left", "left", "right", "right", "left", "left"],
+            "scan_id": ["a", "b", "c", "d", "e", "f"],
+        }
+    )
+
+    out = PatientSpecimenValidityFilter(min_specimens_per_patient=2).transform(df)
+
+    assert out["scan_id"].tolist() == ["a", "b", "c", "d"]
+
+
+def test_patient_specimen_validity_filter_marks_reasons_when_not_dropping():
+    df = pd.DataFrame(
+        {
+            "patientId": ["p1", "p1", "p2", None],
+            "specimenId": ["left", "left", "left", "left"],
+            "scan_id": ["a", "b", "c", "d"],
+        }
+    )
+
+    out = PatientSpecimenValidityFilter(drop=False).transform(df)
+
+    assert out["patient_specimen_valid"].tolist() == [True, True, False, False]
+    assert out["patient_specimen_validity_reason"].tolist() == [
+        "valid",
+        "valid",
+        "specimen_measurements_below_minimum",
+        "missing_patient_or_specimen_id",
+    ]
+
+
+def test_patient_specimen_validity_filter_requires_standard_id_columns():
+    df = pd.DataFrame({"patient_id": ["p1"], "specimen_id": ["left"]})
+
+    with pytest.raises(KeyError, match="patientId"):
+        PatientSpecimenValidityFilter().transform(df)

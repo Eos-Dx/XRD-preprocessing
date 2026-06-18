@@ -7,11 +7,13 @@ The purpose is to transform RAW Bruker GFRM detector frames into normalized
 
 ```text
 h5_to_df
--> PatientFilter
+-> ColumnValueFilter(date cutoff)
+-> MetadataFilter(diagnosis cohort)
 -> FaultyPixelDetector
 -> AzimuthalIntegration
 -> SNRTransformer
 -> SNRFilter
+-> PatientSpecimenValidityFilter
 -> QRangeNormalizer
 -> product-specific analysis
 ```
@@ -67,25 +69,29 @@ sample_thickness_mm       sample thickness in mm
 
 No GFRM means no product preprocessing.
 
-## 2. Patient Filter
+## 2. Early Metadata Filters
 
 What happens:
 
 ```text
-rows are filtered by one metadata column at a time
+rows are filtered by acquisition date and diagnosis
+one metadata column is filtered per pipeline step
 ```
 
 Why:
 
 ```text
+data acquired before trusted protocol dates must not enter image processing
 Aramis/Bremen products process defined clinical cohorts
 metadata filtering must be explicit and reproducible
+early filtering avoids integrating rows that will be rejected anyway
 ```
 
-Use one-column filters for clinical metadata:
+Use one-column filters immediately after `h5_to_df`:
 
 ```python
-PatientFilter("diagnosis", op="in", values=["BENIGN", "CANCER"])
+ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01")
+MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"])
 ```
 
 Several metadata filters are composed as several pipeline steps.
@@ -251,7 +257,54 @@ keep finite snr_db >= 20
 drop NaN or snr_db < 20
 ```
 
-## 7. Q Range Normalization
+## 7. Patient / Specimen Validity Filter
+
+What happens:
+
+```text
+after low-SNR rows are removed, rows are checked by patientId/specimenId
+specimens with too few surviving measurements are removed
+patients with too few valid specimens are removed
+```
+
+Why:
+
+```text
+replicate validity must be based on rows that survived signal-quality QC
+a specimen with fewer than two valid measurements is not reliable for product features
+```
+
+```python
+PatientSpecimenValidityFilter(
+    min_measurements_per_specimen=2,
+    min_specimens_per_patient=1,
+)
+```
+
+Default rule:
+
+```text
+keep specimen if it has >= 2 surviving measurements
+keep patient if it has >= 1 surviving specimen
+```
+
+To require both breast specimens:
+
+```python
+PatientSpecimenValidityFilter(min_specimens_per_patient=2)
+```
+
+Required columns:
+
+```text
+patientId
+specimenId
+```
+
+`h5_to_df` creates these columns from container clinical metadata and raises an
+error if they are missing.
+
+## 8. Q Range Normalization
 
 What happens:
 
@@ -286,7 +339,10 @@ pipeline.
 from sklearn.pipeline import Pipeline
 from xrd_preprocessing import (
     AzimuthalIntegration,
+    ColumnValueFilter,
     FaultyPixelDetector,
+    MetadataFilter,
+    PatientSpecimenValidityFilter,
     QRangeNormalizer,
     RadialProfileSnapshot,
     SNRFilter,
@@ -297,6 +353,14 @@ save_pipeline_stages = True
 
 pipeline = Pipeline(
     [
+        (
+            "trusted_date",
+            ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01"),
+        ),
+        (
+            "diagnosis",
+            MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"]),
+        ),
         ("faulty_pixels", FaultyPixelDetector()),
         (
             "integrate",
@@ -322,9 +386,16 @@ pipeline = Pipeline(
         ),
         ("snr_filter", SNRFilter(min_snr_db=20.0)),
         (
-            "snapshot_after_snr_filter",
+            "clinical_validity",
+            PatientSpecimenValidityFilter(
+                min_measurements_per_specimen=2,
+                min_specimens_per_patient=1,
+            ),
+        ),
+        (
+            "snapshot_after_clinical_validity",
             RadialProfileSnapshot(
-                "after_snr_filter",
+                "after_clinical_validity",
                 enabled=save_pipeline_stages,
             ),
         ),
@@ -354,8 +425,8 @@ q_range_after_integration
 radial_profile_data_after_integration
 q_range_after_snr
 radial_profile_data_after_snr
-q_range_after_snr_filter
-radial_profile_data_after_snr_filter
+q_range_after_clinical_validity
+radial_profile_data_after_clinical_validity
 radial_profile_data_raw
 q_range_after_normalization
 radial_profile_data_after_normalization

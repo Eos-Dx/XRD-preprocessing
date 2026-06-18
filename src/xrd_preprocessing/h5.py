@@ -241,12 +241,45 @@ def _set_row(
     return row
 
 
+def _standardize_clinical_ids(row: dict[str, Any]) -> None:
+    if "patientId" not in row:
+        row["patientId"] = (
+            row.get("patient_clinical_name")
+            or row.get("sample_patient_name")
+            or row.get("patient_id")
+            or row.get("patientID")
+        )
+    if "specimenId" not in row:
+        row["specimenId"] = (
+            row.get("sample_clinical_name")
+            or row.get("clinical_sample_name")
+            or row.get("specimen_id")
+            or row.get("specimenID")
+        )
+
+
+def _validate_clinical_ids(df: pd.DataFrame, *, frame_name: str) -> None:
+    required = ["patientId", "specimenId"]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"{frame_name} is missing required columns: {missing}")
+    invalid = []
+    for column in required:
+        values = df[column]
+        bad = values.isna() | values.astype(str).str.strip().eq("")
+        if bool(bad.any()):
+            invalid.append(column)
+    if invalid:
+        raise ValueError(f"{frame_name} has empty required clinical IDs: {invalid}")
+
+
 def h5_to_df(
     file_path: str | Path,
     *,
     data_preference: str = "gfrm",
     raw_root: str | Path | None = None,
     convert_gfrm: bool = True,
+    require_clinical_ids: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Read Eos-Dx container v0.3 into xrd-analysis-style dataframes.
 
@@ -273,6 +306,8 @@ def h5_to_df(
         session_meta = _attrs(session)
         if "sample" in session:
             session_meta.update(_scalar_fields(session["sample"], prefix="sample_"))
+            session_meta["patientId"] = _text_dataset(session["sample"], "patient_name")
+            session_meta["specimenId"] = _text_dataset(session["sample"], "name")
         if "instrument" in session:
             session_meta.update(_attrs(session["instrument"], prefix="instrument_"))
             session_meta.update(_scalar_fields(session["instrument"]))
@@ -294,6 +329,7 @@ def h5_to_df(
                 raw_root,
                 convert_gfrm,
             )
+            _standardize_clinical_ids(row)
             category = str(
                 row.get("measurement_type_category")
                 or row.get("category")
@@ -305,4 +341,8 @@ def h5_to_df(
             else:
                 measurement_rows.append(row)
 
-    return pd.DataFrame(calibration_rows), pd.DataFrame(measurement_rows)
+    calibration_df = pd.DataFrame(calibration_rows)
+    measurement_df = pd.DataFrame(measurement_rows)
+    if require_clinical_ids and not measurement_df.empty:
+        _validate_clinical_ids(measurement_df, frame_name="measurement_df")
+    return calibration_df, measurement_df

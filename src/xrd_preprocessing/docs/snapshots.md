@@ -53,7 +53,10 @@ radial_profile_data_after_integration
 from sklearn.pipeline import Pipeline
 from xrd_preprocessing import (
     AzimuthalIntegration,
+    ColumnValueFilter,
     FaultyPixelDetector,
+    MetadataFilter,
+    PatientSpecimenValidityFilter,
     QRangeNormalizer,
     RadialProfileSnapshot,
     SNRFilter,
@@ -64,6 +67,14 @@ save_pipeline_stages = True
 
 pipeline = Pipeline(
     [
+        (
+            "trusted_date",
+            ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01"),
+        ),
+        (
+            "diagnosis",
+            MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"]),
+        ),
         ("faulty_pixels", FaultyPixelDetector()),
         ("integrate", AzimuthalIntegration(...)),
         (
@@ -77,8 +88,18 @@ pipeline = Pipeline(
         ),
         ("snr_filter", SNRFilter(min_snr_db=20.0)),
         (
-            "snapshot_after_snr_filter",
-            RadialProfileSnapshot("after_snr_filter", enabled=save_pipeline_stages),
+            "clinical_validity",
+            PatientSpecimenValidityFilter(
+                min_measurements_per_specimen=2,
+                min_specimens_per_patient=1,
+            ),
+        ),
+        (
+            "snapshot_after_clinical_validity",
+            RadialProfileSnapshot(
+                "after_clinical_validity",
+                enabled=save_pipeline_stages,
+            ),
         ),
         (
             "normalize",
@@ -105,8 +126,8 @@ q_range_after_integration
 radial_profile_data_after_integration
 q_range_after_snr
 radial_profile_data_after_snr
-q_range_after_snr_filter
-radial_profile_data_after_snr_filter
+q_range_after_clinical_validity
+radial_profile_data_after_clinical_validity
 radial_profile_data_raw
 q_range_after_normalization
 radial_profile_data_after_normalization

@@ -33,6 +33,7 @@ Strict product defaults:
 ```text
 data_preference = gfrm
 convert_gfrm = True
+require_clinical_ids = True
 ```
 
 If a measurement set does not resolve to a `.gfrm` artifact, `h5_to_df` raises
@@ -66,6 +67,8 @@ Common output columns:
 source_file
 id
 meas_name
+patientId
+specimenId
 metadata
 processing_config
 detector_measurements
@@ -78,6 +81,16 @@ gfrm_data
 gfrm_path
 gfrm_conversion_metadata
 ```
+
+Clinical ID mapping:
+
+```text
+patientId  <- /session/sample/patient_name
+specimenId <- /session/sample/name
+```
+
+If measurement rows do not contain valid `patientId` and `specimenId`,
+`h5_to_df` raises `ValueError`.
 
 If integrated data already exists in the container, it is also exposed:
 
