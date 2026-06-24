@@ -8,7 +8,7 @@ from .filters import (
     PatientSpecimenValidityFilter,
     SNRFilter,
 )
-from .h5 import h5_to_df
+from .h5 import H5SessionFilter, filter_h5_sessions, h5_to_df, list_h5_sessions
 from .faulty_pixels import (
     FAULTY_REASON_CODES,
     FAULTY_REASON_NEGATIVE,
@@ -49,6 +49,7 @@ __all__ = [
     "FAULTY_REASON_OK",
     "FAULTY_REASON_SATURATED",
     "FaultyPixelDetector",
+    "H5SessionFilter",
     "HotPixelDetector",
     "MetadataFilter",
     "PatientFilter",
@@ -67,7 +68,9 @@ __all__ = [
     "extract_gfrm_archive",
     "gfrm_conversion_metadata",
     "gfrm_to_photons",
+    "filter_h5_sessions",
     "h5_to_df",
+    "list_h5_sessions",
     "normalize_profile_by_q_range",
     "parse_bruker_header_preview",
     "parse_gfrm_header",

@@ -6,9 +6,12 @@ The purpose is to transform RAW Bruker GFRM detector frames into normalized
 1D radial profiles ready for product-specific analysis.
 
 ```text
-h5_to_df
--> ColumnValueFilter(date cutoff)
--> MetadataFilter(diagnosis cohort)
+H5 container
+-> H5SessionFilter(product/user supplied attrs)
+-> h5_to_df
+-> h5_to_df thickness exclusion
+-> ColumnValueFilter(optional DataFrame metadata audit)
+-> MetadataFilter(optional product/user supplied metadata)
 -> FaultyPixelDetector
 -> AzimuthalIntegration
 -> SNRTransformer
@@ -28,11 +31,18 @@ Snapshot details are documented in [`snapshots.md`](snapshots.md).
 What happens:
 
 ```text
-container v0.3 is opened
-RAW GFRM artifact is resolved
-GFRM is converted to EOS photon image
-row metadata is collected into a DataFrame
+container v0.3 attrs are inspected
+H5 session filters select sessions before frame loading
+selected session is opened
+RAW GFRM artifact or embedded raw_file is resolved
+measurement_data is created
+row metadata is collected into DataFrames
 ```
+
+For EOSCAN backfill combined archives, `data_preference="gfrm"` reads embedded
+`measurements/*/raw_file` vendor bytes and runs `gfrm_to_photons`. The embedded
+`/raw/data` matrix is the Fabio-decoded ADU frame and is diagnostic, not product
+input.
 
 Why:
 
@@ -50,12 +60,38 @@ PONI text
 sample_thickness_mm metadata
 ```
 
+Combined archive input:
+
+```text
+xrd-session-archive
+calib_*/sample_* session groups
+embedded measurement raw_file vendor bytes
+embedded raw/data ADU matrices for diagnostics
+```
+
 Code:
 
 ```python
 calibration_df, measurement_df = h5_to_df(
     "session.nxs.h5",
     raw_root="path/to/gfrm/files",
+)
+```
+
+Combined archive with product/user supplied filters:
+
+```python
+from xrd_preprocessing import H5SessionFilter, h5_to_df
+
+calibration_df, measurement_df = h5_to_df(
+    "data/product-aramis-data/combined_archive.h5",
+    data_preference="gfrm",
+    drop_missing_sample_thickness=True,
+    h5_filters=[
+        H5SessionFilter("calibration_quality_status", op="==", value="accepted"),
+    ],
+    session_category="SAMPLE",
+    set_category="SAMPLE",
 )
 ```
 
@@ -69,28 +105,88 @@ sample_thickness_mm       sample thickness in mm
 
 No GFRM means no product preprocessing.
 
+No sample thickness means no product integration:
+
+```text
+one measurement point has one sample thickness
+sample thickness is needed to correct effective detector distance
+effective detector distance controls the real q positions
+without thickness, azimuthal integration maps signal to incorrect q values
+```
+
+AGBH/reference thickness must also be controlled:
+
+```text
+AGBH/reference thickness can differ between calibration sessions
+if present, it should come from H5 metadata as agbh_thickness_mm
+if absent, add it to the H5/product metadata before product integration
+do not silently reuse one reference thickness across sessions when it differs
+product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
+```
+
+## Product Development Questions
+
+```text
+Quantify how sample-thickness error propagates into real q-position error during
+azimuthal integration, and define allowable thickness-error bounds for product
+preprocessing.
+
+Quantify how X-ray beam position / beam-center error propagates into real
+q-position error during azimuthal integration, and define allowable beam-center
+error bounds for product preprocessing.
+```
+
+Detailed questions for product-development iteration are in
+[`product_development_questions.md`](product_development_questions.md).
+
 ## 2. Early Metadata Filters
 
 What happens:
 
 ```text
-rows are filtered by acquisition date and diagnosis
-one metadata column is filtered per pipeline step
+H5-level filters select/drop sessions before detector frames are loaded
+DataFrame-level filters select/drop rows after h5_to_df
+one metadata column is filtered per explicit pipeline step
 ```
 
 Why:
 
 ```text
-data acquired before trusted protocol dates must not enter image processing
-Aramis/Bremen products process defined clinical cohorts
+day/date, cohort, protocol, batch, and quality policy are product-owned inputs
 metadata filtering must be explicit and reproducible
-early filtering avoids integrating rows that will be rejected anyway
+xrd_preprocessing only applies the supplied filter command
+early filtering avoids loading/integrating rows the product already commanded to drop
 ```
 
-Use one-column filters immediately after `h5_to_df`:
+Use H5-level filters for archive attrs:
 
 ```python
-ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01")
+H5SessionFilter("calibration_quality_status", op="==", value="accepted")
+```
+
+Use H5-level product-supplied filters when metadata exists:
+
+```python
+H5SessionFilter("spectrum_status", op="==", value="accepted")
+H5SessionFilter("product_selection_status", op="==", value="selected")
+```
+
+Do not encode product selection decisions in `xrd_preprocessing`:
+
+```text
+product decides which batches/sessions/specimens are selected
+product writes that decision into JSON/H5 metadata or a reviewed manifest
+xrd_preprocessing receives that decision as H5SessionFilter/ColumnValueFilter
+```
+
+If selected batches are provided externally, store them in product metadata as
+explicit patient/specimen/batch selection fields. The library must not infer
+product importance from free-text notes.
+
+Use one-column DataFrame filters after `h5_to_df`:
+
+```python
+ColumnValueFilter("calibration_quality_status", op="==", value="accepted")
 MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"])
 ```
 
@@ -161,11 +257,21 @@ thick samples require thickness correction
 
 ```python
 AzimuthalIntegration(
-    npt=900,
     calibration_mode="poni",
     mask_column="pyfai_faulty_pixel_mask",
     error_model="poisson",
     thickness_reference_mm=<explicit float>,
+)
+```
+
+If the H5/product DataFrame contains per-row AGBH/reference thickness:
+
+```python
+AzimuthalIntegration(
+    calibration_mode="poni",
+    mask_column="pyfai_faulty_pixel_mask",
+    error_model="poisson",
+    thickness_reference_column="agbh_thickness_mm",
 )
 ```
 
@@ -176,6 +282,12 @@ measurement_data
 ponifile
 sample_thickness_mm
 pyfai_faulty_pixel_mask
+```
+
+Optional per-row reference column:
+
+```text
+agbh_thickness_mm
 ```
 
 Set q range before integration:
@@ -354,8 +466,8 @@ save_pipeline_stages = True
 pipeline = Pipeline(
     [
         (
-            "trusted_date",
-            ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01"),
+            "calibration_quality",
+            ColumnValueFilter("calibration_quality_status", op="==", value="accepted"),
         ),
         (
             "diagnosis",
@@ -365,7 +477,6 @@ pipeline = Pipeline(
         (
             "integrate",
             AzimuthalIntegration(
-                npt=900,
                 calibration_mode="poni",
                 mask_column="pyfai_faulty_pixel_mask",
                 error_model="poisson",

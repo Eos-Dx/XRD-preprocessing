@@ -165,8 +165,8 @@ drop NaN and low-SNR rows
 
 ```text
 h5_to_df
-ColumnValueFilter(date cutoff)
-PatientFilter / MetadataFilter(diagnosis cohort)
+ColumnValueFilter(product/user supplied metadata)
+PatientFilter / MetadataFilter(optional product/user supplied metadata)
 FaultyPixelDetector
 AzimuthalIntegration(error_model="poisson")
 SNRTransformer(snr_method="poisson")

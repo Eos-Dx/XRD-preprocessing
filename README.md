@@ -13,9 +13,11 @@ Core scope:
 Standard product preprocessing order:
 
 ```text
-h5_to_df
--> ColumnValueFilter(date cutoff)
--> MetadataFilter(diagnosis cohort)
+H5 container
+-> H5SessionFilter(product/user supplied attrs)
+-> h5_to_df(drop_missing_sample_thickness=True)
+-> ColumnValueFilter(optional DataFrame metadata audit)
+-> MetadataFilter(optional product/user supplied metadata)
 -> FaultyPixelDetector
 -> AzimuthalIntegration(error_model="poisson", thickness_reference_mm=<explicit float>)
 -> SNRTransformer(snr_method="poisson")
@@ -27,6 +29,44 @@ h5_to_df
 Product preprocessing requires container v0.3 with original RAW GFRM artifacts.
 `measurement_data` is produced from `gfrm_to_photons`; stored NumPy arrays are
 not the product source of truth.
+
+Thickness contract:
+
+```text
+one measurement point has one sample thickness
+missing sample thickness means no correct azimuthal integration
+AGBH/reference thickness can differ between calibration sessions
+AGBH/reference thickness should be present in H5/product metadata as agbh_thickness_mm
+AzimuthalIntegration can use thickness_reference_column="agbh_thickness_mm"
+product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
+```
+
+Protocol/spectrum boundary:
+
+```text
+xrd_preprocessing does not decide which measurements a product uses
+product owns days, cohort, protocol, K-alpha/K-beta, batch, quality, and label policy
+xrd_preprocessing applies explicit filters supplied by product/user
+product metadata lives outside the library in controlled JSON/H5 attrs/manifests
+example product-owned fields: spectrum_status, protocol_status,
+calibration_quality_status, product_selection_status, patientId, specimenId
+```
+
+Open product-development questions:
+
+```text
+How does sample-thickness measurement error propagate into real q-position error?
+How does X-ray beam position / beam-center error propagate into real q-position error?
+Which product-owned metadata fields will each product provide for protocol/batch selection?
+Which product-owned metadata fields will represent AGBH/HBH measurement reliability?
+What geometry-error bounds should become product preprocessing QC thresholds?
+```
+
+Question details:
+
+```text
+src/xrd_preprocessing/docs/product_development_questions.md
+```
 
 Environment:
 
@@ -62,7 +102,13 @@ Key docs:
 
 ```text
 src/xrd_preprocessing/docs/pipeline.md
+src/xrd_preprocessing/docs/h5_to_df.md
+src/xrd_preprocessing/docs/h5_session_filters.md
+src/xrd_preprocessing/docs/product_development_questions.md
+src/xrd_preprocessing/docs/filters.md
 src/xrd_preprocessing/docs/snapshots.md
+src/xrd_preprocessing/docs/gfrm_converter.md
+src/xrd_preprocessing/docs/container_raw_gfrm_requirement.md
 src/xrd_preprocessing/docs/azimuthal_integration.md
 src/xrd_preprocessing/docs/faulty_pixels.md
 src/xrd_preprocessing/docs/snr.md

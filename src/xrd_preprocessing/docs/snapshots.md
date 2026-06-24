@@ -68,8 +68,8 @@ save_pipeline_stages = True
 pipeline = Pipeline(
     [
         (
-            "trusted_date",
-            ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01"),
+            "calibration_quality",
+            ColumnValueFilter("calibration_quality_status", op="==", value="accepted"),
         ),
         (
             "diagnosis",

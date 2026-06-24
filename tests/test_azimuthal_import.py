@@ -29,6 +29,12 @@ def fake_image() -> np.ndarray:
     return (np.exp(-((x - 8) ** 2 + (y - 8) ** 2) / 20.0) + 0.1).astype(np.float32)
 
 
+def test_azimuthal_integration_default_npt_is_100():
+    integrator = AzimuthalIntegration()
+
+    assert integrator.npt == 100
+
+
 def test_perform_azimuthal_integration_fake_poni_image():
     row = pd.Series(
         {
@@ -210,3 +216,46 @@ def test_azimuthal_integration_applies_thickness_to_poni_distance():
     assert out["sample_thickness_mm"].iloc[0] == 25.0
     assert out["thickness_reference_mm"].iloc[0] == 11.0
     assert out["calculated_distance"].iloc[0] == pytest.approx(0.093)
+
+
+def test_azimuthal_integration_can_use_row_reference_thickness_column():
+    df = pd.DataFrame(
+        {
+            "measurement_data": [fake_image()],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+            "sample_thickness_mm": [25.0],
+            "agbh_thickness_mm": [15.0],
+        }
+    )
+
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        thickness_reference_column="agbh_thickness_mm",
+    ).fit_transform(df)
+
+    assert out["sample_thickness_mm"].iloc[0] == 25.0
+    assert out["thickness_reference_mm"].iloc[0] == 15.0
+    assert out["thickness_reference_source"].iloc[0] == "agbh_thickness_mm"
+    assert out["calculated_distance"].iloc[0] == pytest.approx(0.095)
+
+
+def test_azimuthal_integration_reference_thickness_column_missing_raises():
+    df = pd.DataFrame(
+        {
+            "measurement_data": [fake_image()],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+            "sample_thickness_mm": [25.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Missing required thickness reference column"):
+        AzimuthalIntegration(
+            npt=32,
+            calibration_mode="poni",
+            thickness_reference_column="agbh_thickness_mm",
+        ).fit_transform(df)

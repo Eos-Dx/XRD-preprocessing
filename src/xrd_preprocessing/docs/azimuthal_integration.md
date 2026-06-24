@@ -87,7 +87,6 @@ different integrated profiles
 from xrd_preprocessing import AzimuthalIntegration
 
 integrator = AzimuthalIntegration(
-    npt=900,
     calibration_mode="poni",
     column="measurement_data",
     mask_column="pyfai_faulty_pixel_mask",
@@ -109,6 +108,7 @@ sample_thickness_mm        sample thickness in mm
 interpolation_q_range      optional tuple, for example (2.0, 23.0)
 azimuthal_range            optional azimuth range
 pyfai_faulty_pixel_mask    optional uint8 mask, 1 = exclude
+agbh_thickness_mm          optional AGBH/reference thickness in mm
 ```
 
 Output columns:
@@ -128,6 +128,7 @@ thickness_adjustment_reliable   True/False
 thickness_adjustment_warning    warning text if correction was not applied
 sample_thickness_mm             parsed float thickness
 thickness_reference_mm          reference thickness in mm
+thickness_reference_source      constant or source column name
 thickness_adjusted_distance_m   corrected pyFAI distance
 ```
 
@@ -184,25 +185,25 @@ The integrator passes this value directly to pyFAI as `radial_range`.
 
 ## 1D And 2D
 
-1D integration:
+1D integration with default 100 radial bins:
 
 ```python
-AzimuthalIntegration(mode="1D", npt=900)
+AzimuthalIntegration(mode="1D")
 ```
 
-2D integration:
+2D integration with default 100 radial bins:
 
 ```python
-AzimuthalIntegration(mode="2D", npt=900, npt_azimuthal=360)
+AzimuthalIntegration(mode="2D", npt_azimuthal=360)
 ```
 
-`npt` controls radial bins.
+`npt` controls radial bins. Default is `100`.
 
 `npt_azimuthal` controls angular bins.
 
 ## Thickness Correction
 
-Thickness correction is required for this project.
+Thickness correction is applied when the product pipeline configures it.
 
 Reason:
 
@@ -211,6 +212,26 @@ For thick samples, scattering does not come from the front surface only.
 The effective scattering plane is approximated as the sample midpoint.
 If calibration was done at a reference thickness, the detector distance must be
 shifted by half of the thickness difference.
+```
+
+Measurement contract:
+
+```text
+one measurement point has one sample thickness
+one row in the product DataFrame represents one measured point/set
+if that row has no sample thickness, its q axis cannot be corrected
+xrd_preprocessing does not decide whether to keep/drop the row
+product should command drop, flag, or stop before corrected integration
+```
+
+Reference-thickness contract:
+
+```text
+AGBH/reference thickness can differ between calibration sessions
+AGBH/reference thickness should be stored in H5 metadata
+preferred standardized DataFrame column: agbh_thickness_mm
+AGBH/HBH reliability policy is product-owned metadata
+if the H5 container lacks required values, add them before product preprocessing
 ```
 
 Formula:
@@ -233,10 +254,52 @@ adjusted_distance_m = 0.100 - 0.5 * (25.0 - 11.0) * 1e-3
 
 `sample_thickness_mm` must be present in the input DataFrame.
 
-`thickness_reference_mm` must be passed explicitly as a float.
+Reference thickness must be supplied either as a constant
+`thickness_reference_mm` or as a row-specific `thickness_reference_column`.
 
-If `sample_thickness_mm` or `thickness_reference_mm` is missing, product
-azimuthal integration raises `ValueError`.
+If AGBH/reference thickness is row-specific, use:
+
+```python
+AzimuthalIntegration(
+    calibration_mode="poni",
+    thickness_reference_column="agbh_thickness_mm",
+)
+```
+
+If `thickness_reference_column` is set, that column must exist and contain a
+finite numeric value for every row. The transformer does not silently fall back
+to a constant reference thickness.
+
+If `sample_thickness_mm`, constant `thickness_reference_mm`, or configured
+`thickness_reference_column` is missing, product azimuthal integration raises
+`ValueError`.
+
+Reason:
+
+```text
+sample thickness changes the effective detector distance
+effective detector distance is used to calculate real q positions
+missing or incorrect thickness shifts the q axis
+shifted q positions make the integrated profile incorrect for product use
+```
+
+## Product Development Questions
+
+```text
+How does sample-thickness measurement error propagate into real q-position error?
+
+How does X-ray beam position / beam-center error propagate into real q-position
+error?
+
+Required follow-up:
+estimate dq/d(thickness), estimate dq/d(beam-center position), simulate
+representative thickness and beam-center errors, and define the maximum
+acceptable geometry errors before preprocessing/model features are considered
+unreliable.
+```
+
+Full question list for product-development iteration:
+[`product_development_questions.md`](product_development_questions.md).
 
 If `require_thickness_adjustment=False` is used outside the product path, missing
 or invalid thickness can be marked as:

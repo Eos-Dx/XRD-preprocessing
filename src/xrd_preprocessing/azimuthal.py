@@ -101,6 +101,7 @@ def _thickness_metadata(
     warning_message: str,
     sample_thickness_mm: float | None,
     reference_thickness_mm: float | None,
+    reference_source: str,
 ) -> dict[str, object]:
     return {
         "thickness_adjustment_applied": bool(applied),
@@ -110,7 +111,31 @@ def _thickness_metadata(
         "thickness_reference_mm": (
             float(reference_thickness_mm) if reference_thickness_mm is not None else None
         ),
+        "thickness_reference_source": reference_source,
     }
+
+
+def _resolve_reference_thickness(
+    row: pd.Series,
+    *,
+    thickness_reference_mm: float | None,
+    thickness_reference_column: str | None,
+) -> tuple[float | None, str]:
+    if thickness_reference_column is None:
+        return thickness_reference_mm, "constant"
+    if thickness_reference_column not in row.index:
+        raise ValueError(
+            f"Missing required thickness reference column: {thickness_reference_column}"
+        )
+    try:
+        row_reference_mm = float(row[thickness_reference_column])
+    except (TypeError, ValueError):
+        row_reference_mm = np.nan
+    if not np.isfinite(row_reference_mm):
+        raise ValueError(
+            f"Invalid thickness reference value in column: {thickness_reference_column}"
+        )
+    return row_reference_mm, thickness_reference_column
 
 
 def _resolve_thickness(
@@ -120,7 +145,13 @@ def _resolve_thickness(
     require_thickness_adjustment: bool,
     sample_thickness_column: str,
     thickness_reference_mm: float | None,
+    thickness_reference_column: str | None,
 ) -> tuple[float | None, dict[str, object]]:
+    resolved_reference_mm, reference_source = _resolve_reference_thickness(
+        row,
+        thickness_reference_mm=thickness_reference_mm,
+        thickness_reference_column=thickness_reference_column,
+    )
     if not thickness_adjustment:
         message = (
             "Thickness adjustment disabled; azimuthal integration is unreliable for thick samples."
@@ -136,10 +167,11 @@ def _resolve_thickness(
             reliable=not require_thickness_adjustment,
             warning_message=message,
             sample_thickness_mm=None,
-            reference_thickness_mm=thickness_reference_mm,
+            reference_thickness_mm=resolved_reference_mm,
+            reference_source=reference_source,
         )
 
-    if thickness_reference_mm is None:
+    if resolved_reference_mm is None:
         raise ValueError("thickness_reference_mm must be set explicitly.")
 
     if sample_thickness_column not in row.index:
@@ -152,7 +184,8 @@ def _resolve_thickness(
             reliable=False,
             warning_message=message,
             sample_thickness_mm=None,
-            reference_thickness_mm=thickness_reference_mm,
+            reference_thickness_mm=resolved_reference_mm,
+            reference_source=reference_source,
         )
 
     try:
@@ -170,7 +203,8 @@ def _resolve_thickness(
             reliable=False,
             warning_message=message,
             sample_thickness_mm=None,
-            reference_thickness_mm=thickness_reference_mm,
+            reference_thickness_mm=resolved_reference_mm,
+            reference_source=reference_source,
         )
 
     return sample_thickness_mm, _thickness_metadata(
@@ -178,7 +212,8 @@ def _resolve_thickness(
         reliable=True,
         warning_message="",
         sample_thickness_mm=float(sample_thickness_mm),
-        reference_thickness_mm=thickness_reference_mm,
+        reference_thickness_mm=resolved_reference_mm,
+        reference_source=reference_source,
     )
 
 
@@ -186,7 +221,7 @@ def _perform_azimuthal_integration_with_metadata(
     row: pd.Series,
     *,
     column: str = "measurement_data",
-    npt: int = 256,
+    npt: int = 100,
     npt_azimuthal: int = 360,
     mask: np.ndarray | None = None,
     mask_column: str | None = None,
@@ -196,6 +231,7 @@ def _perform_azimuthal_integration_with_metadata(
     thickness_adjustment: bool = True,
     require_thickness_adjustment: bool = True,
     thickness_reference_mm: float | None = None,
+    thickness_reference_column: str | None = None,
     sample_thickness_column: str = "sample_thickness_mm",
 ):
     """Integrate one detector image and return profile plus row-level metadata."""
@@ -218,13 +254,16 @@ def _perform_azimuthal_integration_with_metadata(
         require_thickness_adjustment=require_thickness_adjustment,
         sample_thickness_column=sample_thickness_column,
         thickness_reference_mm=thickness_reference_mm,
+        thickness_reference_column=thickness_reference_column,
     )
 
     if calibration_mode == "dataframe":
         sample_distance_mm = float(row["calculated_distance"]) * 1e3
         adjusted_distance_m = None
         if sample_thickness is not None:
-            sample_distance_mm -= 0.5 * (sample_thickness - float(thickness_reference_mm))
+            sample_distance_mm -= 0.5 * (
+                sample_thickness - float(thickness_meta["thickness_reference_mm"])
+            )
             adjusted_distance_m = sample_distance_mm * 1e-3
         ai = _integrator_from_dataframe(
             float(row["pixel_size"]) * 1e-6,
@@ -241,7 +280,7 @@ def _perform_azimuthal_integration_with_metadata(
             poni_text, adjusted_distance_m = _adjust_poni_distance(
                 poni_text,
                 sample_thickness,
-                thickness_reference_mm,
+                float(thickness_meta["thickness_reference_mm"]),
             )
             if adjusted_distance_m is None:
                 message = "PONI Distance field missing; thickness adjustment was not applied."
@@ -318,7 +357,7 @@ def perform_azimuthal_integration(
     row: pd.Series,
     *,
     column: str = "measurement_data",
-    npt: int = 256,
+    npt: int = 100,
     npt_azimuthal: int = 360,
     mask: np.ndarray | None = None,
     mask_column: str | None = None,
@@ -328,6 +367,7 @@ def perform_azimuthal_integration(
     thickness_adjustment: bool = True,
     require_thickness_adjustment: bool = True,
     thickness_reference_mm: float | None = None,
+    thickness_reference_column: str | None = None,
     sample_thickness_column: str = "sample_thickness_mm",
 ):
     """Integrate one detector image into one 1D or 2D pyFAI profile."""
@@ -344,6 +384,7 @@ def perform_azimuthal_integration(
         thickness_adjustment=thickness_adjustment,
         require_thickness_adjustment=require_thickness_adjustment,
         thickness_reference_mm=thickness_reference_mm,
+        thickness_reference_column=thickness_reference_column,
         sample_thickness_column=sample_thickness_column,
     )
     return radial, intensity, sigma_or_azimuthal, distance
@@ -357,7 +398,7 @@ class AzimuthalIntegration(TransformerMixin, BaseEstimator):
     output_column: str = "radial_profile_data"
     q_range_column: str = "q_range"
     sigma_column: str = "radial_profile_sigma"
-    npt: int = 256
+    npt: int = 100
     npt_azimuthal: int = 360
     mode: str = "1D"
     calibration_mode: str = "dataframe"
@@ -368,6 +409,7 @@ class AzimuthalIntegration(TransformerMixin, BaseEstimator):
     thickness_adjustment: bool = True
     require_thickness_adjustment: bool = True
     thickness_reference_mm: float | None = None
+    thickness_reference_column: str | None = None
     sample_thickness_column: str = "sample_thickness_mm"
 
     def fit(self, X: pd.DataFrame, y=None):
@@ -395,6 +437,7 @@ class AzimuthalIntegration(TransformerMixin, BaseEstimator):
                 thickness_adjustment=self.thickness_adjustment,
                 require_thickness_adjustment=self.require_thickness_adjustment,
                 thickness_reference_mm=self.thickness_reference_mm,
+                thickness_reference_column=self.thickness_reference_column,
                 sample_thickness_column=self.sample_thickness_column,
             ),
             axis=1,
