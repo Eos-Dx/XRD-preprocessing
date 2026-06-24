@@ -175,3 +175,10 @@ PatientSpecimenValidityFilter
 QRangeNormalizer(q_min=6.7, q_max=7.1)
 product-specific analysis
 ```
+
+AgBH monochromaticity filters are available for product-owned day/session
+quality metadata:
+
+```python
+from xrd_preprocessing import AgBHMonochromaticityQualityControl
+```

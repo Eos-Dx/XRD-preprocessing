@@ -8,6 +8,7 @@ Core scope:
 - simple one-detector azimuthal integration via `pyFAI`
 - q-range profile normalization
 - Poisson-only signal-to-noise ratio in dB from pyFAI sigma
+- AgBH monochromaticity QC scoring from calibration profiles
 - reusable metadata and SNR row filters
 
 Standard product preprocessing order:
@@ -104,6 +105,7 @@ Key docs:
 src/xrd_preprocessing/docs/pipeline.md
 src/xrd_preprocessing/docs/h5_to_df.md
 src/xrd_preprocessing/docs/h5_session_filters.md
+src/xrd_preprocessing/docs/agbh_monochromaticity.md
 src/xrd_preprocessing/docs/product_development_questions.md
 src/xrd_preprocessing/docs/filters.md
 src/xrd_preprocessing/docs/snapshots.md

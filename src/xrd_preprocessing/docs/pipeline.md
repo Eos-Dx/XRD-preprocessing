@@ -192,6 +192,31 @@ MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"])
 
 Several metadata filters are composed as several pipeline steps.
 
+## 2a. Optional AgBH Monochromaticity QC
+
+Product code can score day/session beam monochromaticity from integrated AgBH
+calibration profiles before selecting product measurements for those days.
+
+```python
+from xrd_preprocessing import AgBHMonochromaticityQualityControl
+
+agbh_qc = AgBHMonochromaticityQualityControl(
+    id_column="session_uid",
+    max_score=0.1,
+)
+scored_agbh_df = agbh_qc.fit_transform(agbh_df)
+
+h5_filters = [agbh_qc.selection_.h5_id_filter(column="linked_agbh_session_uid")]
+```
+
+By default the scorer builds an internal median AgBH baseline from all fit rows;
+a product may pass `reference_df` only if it has a controlled baseline. This
+computes quality metadata and exposes accepted AgBH IDs for strict H5 session
+filtering. Product code decides how accepted/review/rejected AgBH sessions map
+to measurement inclusion. Date fallback exists, but ID-based filtering is
+preferred when product H5 metadata has shared linkage. Details:
+[`agbh_monochromaticity.md`](agbh_monochromaticity.md).
+
 ## 3. Faulty Pixel Detector
 
 What happens:

@@ -1,5 +1,17 @@
 """Lightweight XRD preprocessing API."""
 
+from .agbh import (
+    AGBH_D_SPACING_NM,
+    AG_KBETA_TO_KALPHA_Q_RATIO,
+    AgBHMonochromaticityFilter,
+    AgBHMonochromaticityQualityControl,
+    AgBHMonochromaticityResult,
+    AgBHMonochromaticitySelection,
+    AgBHMonochromaticityScorer,
+    agbh_alpha_peaks,
+    agbh_kbeta_windows,
+    calculate_agbh_monochromaticity,
+)
 from .azimuthal import AzimuthalIntegration, perform_azimuthal_integration
 from .filters import (
     ColumnValueFilter,
@@ -42,6 +54,13 @@ from .snapshots import RadialProfileSnapshot
 
 __all__ = [
     "AzimuthalIntegration",
+    "AGBH_D_SPACING_NM",
+    "AG_KBETA_TO_KALPHA_Q_RATIO",
+    "AgBHMonochromaticityFilter",
+    "AgBHMonochromaticityQualityControl",
+    "AgBHMonochromaticityResult",
+    "AgBHMonochromaticitySelection",
+    "AgBHMonochromaticityScorer",
     "ColumnValueFilter",
     "FAULTY_REASON_CODES",
     "FAULTY_REASON_NEGATIVE",
@@ -58,7 +77,10 @@ __all__ = [
     "RadialProfileSnapshot",
     "SNRFilter",
     "SNRTransformer",
+    "agbh_alpha_peaks",
+    "agbh_kbeta_windows",
     "calculate_snr",
+    "calculate_agbh_monochromaticity",
     "count_faulty_pixel_reasons",
     "create_faulty_pixel_reason_map",
     "create_mask",
