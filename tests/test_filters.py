@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -8,7 +9,11 @@ from xrd_preprocessing import (
     MetadataFilter,
     PatientFilter,
     PatientSpecimenValidityFilter,
+    PoniQRangeFilter,
+    RadialProfileValueFilter,
     SNRFilter,
+    SpecimenValidityFilter,
+    estimate_poni_q_range_nm_inv,
 )
 
 
@@ -216,3 +221,155 @@ def test_patient_specimen_validity_filter_requires_standard_id_columns():
 
     with pytest.raises(KeyError, match="patientId"):
         PatientSpecimenValidityFilter().transform(df)
+
+
+def test_specimen_validity_filter_uses_specimen_id_only():
+    df = pd.DataFrame(
+        {
+            "patientId": ["p1", "p2", "p3", "p4"],
+            "specimenId": ["left", "left", "right", ""],
+            "scan_id": ["a", "b", "c", "d"],
+        }
+    )
+
+    filt = SpecimenValidityFilter(min_measurements_per_specimen=2)
+    out = filt.transform(df)
+
+    assert out["scan_id"].tolist() == ["a", "b"]
+    assert out["specimen_measurement_count"].tolist() == [2, 2]
+    assert filt.stats_["specimens_pass"] == 1
+    assert filt.stats_["rows_pass"] == 2
+    assert "patient_valid_specimen_count" not in out.columns
+
+
+def test_specimen_validity_filter_marks_reasons_when_not_dropping():
+    df = pd.DataFrame(
+        {
+            "specimenId": ["left", "left", "right", None],
+            "scan_id": ["a", "b", "c", "d"],
+        }
+    )
+
+    out = SpecimenValidityFilter(
+        min_measurements_per_specimen=2,
+        drop=False,
+    ).transform(df)
+
+    assert out["specimen_valid"].tolist() == [True, True, False, False]
+    assert out["specimen_validity_reason"].tolist() == [
+        "valid",
+        "valid",
+        "specimen_measurements_below_minimum",
+        "missing_specimen_id",
+    ]
+
+
+def _fake_poni(distance_m: float = 0.1) -> str:
+    return f"""# Fake PONI for tests
+poni_version: 2.1
+Detector: Detector
+Detector_config: {{"pixel1": 0.0001, "pixel2": 0.0001, "max_shape": [16, 16], "orientation": 3}}
+Distance: {distance_m}
+Poni1: 0.0008
+Poni2: 0.0008
+Rot1: 0
+Rot2: 0
+Rot3: 0
+Wavelength: 1e-10
+"""
+
+
+def test_estimate_poni_q_range_uses_poni_geometry():
+    _q_min, q_max, distance = estimate_poni_q_range_nm_inv(
+        _fake_poni(0.1),
+        shape=(16, 16),
+    )
+
+    assert q_max > 0.6
+    assert distance == pytest.approx(0.1)
+
+
+def test_poni_q_range_filter_keeps_rows_that_cover_requested_q_max():
+    image = np.zeros((16, 16), dtype=np.float32)
+    df = pd.DataFrame(
+        {
+            "sample_id": ["short", "long"],
+            "measurement_data": [image, image],
+            "ponifile": [_fake_poni(0.1), _fake_poni(1.0)],
+        }
+    )
+
+    filt = PoniQRangeFilter(required_q_max_nm_inv=0.5)
+    out = filt.transform(df)
+
+    assert out["sample_id"].tolist() == ["short"]
+    assert out["poni_q_range_pass"].tolist() == [True]
+    assert filt.stats_["rows_in"] == 2
+    assert filt.stats_["rows_pass"] == 1
+    assert filt.stats_["failed_ids"] == ["long"]
+
+
+def test_poni_q_range_filter_can_use_thickness_adjusted_distance():
+    image = np.zeros((16, 16), dtype=np.float32)
+    df = pd.DataFrame(
+        {
+            "sample_id": ["without_adjustment", "with_adjustment"],
+            "measurement_data": [image, image],
+            "ponifile": [_fake_poni(0.1), _fake_poni(0.1)],
+            "sample_thickness_mm": [11.0, 111.0],
+        }
+    )
+
+    filt = PoniQRangeFilter(
+        required_q_max_nm_inv=1.2,
+        thickness_adjustment=True,
+        thickness_reference_mm=11.0,
+    )
+    out = filt.transform(df)
+
+    assert out["sample_id"].tolist() == ["with_adjustment"]
+    assert out["poni_calculated_distance_m"].iloc[0] == pytest.approx(0.05)
+
+
+def test_radial_profile_value_filter_keeps_profiles_above_threshold_near_q():
+    q = np.array([13.8, 14.05, 14.3])
+    df = pd.DataFrame(
+        {
+            "sample_id": ["air", "signal"],
+            "q_range": [q, q],
+            "radial_profile_data": [
+                np.array([0.5, 1.2, 0.7]),
+                np.array([0.5, 2.4, 0.7]),
+            ],
+        }
+    )
+
+    filt = RadialProfileValueFilter(q_value_nm_inv=14.0, threshold=2.0, op=">")
+    out = filt.transform(df)
+
+    assert out["sample_id"].tolist() == ["signal"]
+    assert out["radial_profile_nearest_q_nm_inv"].iloc[0] == pytest.approx(14.05)
+    assert out["radial_profile_value_at_q"].iloc[0] == pytest.approx(2.4)
+    assert filt.stats_["rows_in"] == 2
+    assert filt.stats_["rows_pass"] == 1
+    assert filt.stats_["failed_ids"] == ["air"]
+
+
+def test_radial_profile_value_filter_can_require_nearby_q_point():
+    df = pd.DataFrame(
+        {
+            "sample_id": ["far"],
+            "q_range": [np.array([13.0, 13.2])],
+            "radial_profile_data": [np.array([10.0, 10.0])],
+        }
+    )
+
+    filt = RadialProfileValueFilter(
+        q_value_nm_inv=14.0,
+        threshold=2.0,
+        max_q_delta_nm_inv=0.2,
+    )
+    out = filt.transform(df)
+
+    assert out.empty
+    assert filt.stats_["rows_fail"] == 1

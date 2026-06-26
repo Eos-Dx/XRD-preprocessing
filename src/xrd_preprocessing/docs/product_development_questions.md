@@ -52,7 +52,7 @@ stored in product-owned H5 metadata for every product row?
 Why it matters:
 
 ```text
-sample-thickness correction is relative to AGBH/reference thickness
+sample-thickness correction is relative to calibrant/reference thickness
 wrong reference thickness shifts the effective detector distance
 effective detector distance sets real q positions
 ```
@@ -60,9 +60,9 @@ effective detector distance sets real q positions
 Required follow-up:
 
 ```text
-standardize H5 field name as agbh_thickness_mm
-add agbh_thickness_mm to H5/product metadata if absent
-use AzimuthalIntegration(thickness_reference_column="agbh_thickness_mm")
+standardize H5 field name as calibrant_thickness_mm
+add calibrant_thickness_mm to H5/product metadata if absent
+use AzimuthalIntegration(thickness_reference_column="calibrant_thickness_mm")
 define product command for rows where required reference thickness is missing:
 drop, flag, or stop
 ```
@@ -71,9 +71,9 @@ Current product-data requirement:
 
 ```text
 do not rely on free-text file paths for product integration
-write explicit agbh_thickness_mm into H5/product metadata
+write explicit calibrant_thickness_mm into H5/product metadata
 verify every selected measurement row has both sample_thickness_mm and
-agbh_thickness_mm before AzimuthalIntegration
+calibrant_thickness_mm before AzimuthalIntegration
 ```
 
 ### X-Ray Beam Position

@@ -48,7 +48,10 @@ calibration_df, measurement_df = h5_to_df(
     data_preference="gfrm",
     drop_missing_sample_thickness=True,
     h5_filters=[
-        H5SessionFilter("calibration_quality_status", op="==", value="accepted"),
+        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+        H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
     ],
     session_category="SAMPLE",
     set_category="SAMPLE",
@@ -61,7 +64,11 @@ To inspect archive metadata without loading detector arrays:
 ```python
 selected_sessions = filter_h5_sessions(
     "data/product-aramis-data/combined_archive.h5",
-    [H5SessionFilter("calibration_quality_status", op="==", value="accepted")],
+    [
+        H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+        H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+    ],
     session_category="SAMPLE",
 )
 ```
@@ -98,7 +105,13 @@ Use this only to inspect the Fabio-decoded ADU matrix stored in `/raw/data`.
 Product preprocessing should use `data_preference="gfrm"` so embedded
 `measurements/*/raw_file` bytes go through `gfrm_to_photons`.
 
-Thickness filter:
+Preferred H5-level thickness availability filter:
+
+```python
+H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True)
+```
+
+Safety-net measurement-level thickness filter:
 
 ```text
 drop_missing_sample_thickness = True
@@ -123,12 +136,12 @@ xrd_preprocessing drops it only when drop_missing_sample_thickness=True
 product decides whether to drop, flag, or stop before azimuthal integration
 ```
 
-AGBH/reference thickness:
+calibrant/reference thickness:
 
 ```text
-AGBH/reference thickness can differ between calibration sessions
+calibrant/reference thickness can differ between calibration sessions
 this value should be stored in the H5 container metadata
-preferred standardized column: agbh_thickness_mm
+preferred standardized column: calibrant_thickness_mm
 if it is absent from H5, add it before product preprocessing
 product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
 ```
@@ -136,9 +149,15 @@ product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
 Product rule:
 
 ```text
-do not infer AGBH thickness from free-text paths in product runs
-store explicit agbh_thickness_mm in H5/product metadata
+do not infer calibrant thickness from free-text paths in product runs
+store explicit calibrant_thickness_mm in H5/product metadata
+apply product-specific safety ranges before azimuthal integration
 ```
+
+In combined archive containers grouped by calibration, `calibrant_thickness_mm` may
+be stored on the archive/calibration group. `xrd_preprocessing` promotes this
+attribute to a first-class `calibrant_thickness_mm` DataFrame column while preserving
+the original `archive_group_calibrant_thickness_mm` audit column.
 
 K-beta/protocol metadata boundary:
 
@@ -161,8 +180,9 @@ reviewed product manifest
 If K-beta/batch metadata is absent from H5, the product may add it before
 dataset construction or use an explicit reviewed patientId/specimenId manifest.
 
-The filter runs inside `h5_to_df` before the row is returned to
-`measurement_df`. The count is stored in:
+The safety-net filter runs inside `h5_to_df` before the row is returned to
+`measurement_df`. Prefer H5-level selection first when the container exposes
+the needed metadata. The count is stored in:
 
 ```python
 measurement_df.attrs["dropped_missing_sample_thickness"]

@@ -53,9 +53,7 @@ radial_profile_data_after_integration
 from sklearn.pipeline import Pipeline
 from xrd_preprocessing import (
     AzimuthalIntegration,
-    ColumnValueFilter,
     FaultyPixelDetector,
-    MetadataFilter,
     PatientSpecimenValidityFilter,
     QRangeNormalizer,
     RadialProfileSnapshot,
@@ -67,14 +65,6 @@ save_pipeline_stages = True
 
 pipeline = Pipeline(
     [
-        (
-            "calibration_quality",
-            ColumnValueFilter("calibration_quality_status", op="==", value="accepted"),
-        ),
-        (
-            "diagnosis",
-            MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"]),
-        ),
         ("faulty_pixels", FaultyPixelDetector()),
         ("integrate", AzimuthalIntegration(...)),
         (

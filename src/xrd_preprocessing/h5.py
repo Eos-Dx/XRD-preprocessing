@@ -10,7 +10,27 @@ import h5py
 import numpy as np
 import pandas as pd
 
+from .azimuthal import estimate_poni_q_range_nm_inv
 from .gfrm import gfrm_to_photons
+
+
+PROMOTED_ARCHIVE_GROUP_FIELDS = (
+    "calibrant_thickness_mm",
+    "calibrant_thickness_source",
+    "calibrant_thickness_rule",
+    "calibrant_thickness_effective_date",
+    "calibrant_thickness_backfilled_at",
+    "kbeta_absent",
+    "xray_spectrum",
+    "product_batch_usable",
+    "product_batch_id",
+    "human1_data_batch",
+    "product_protocol_version",
+)
+
+CALIBRANT_THICKNESS_COLUMN = "calibrant_thickness_mm"
+CALIBRANT_THICKNESS_MIN_MM = 10.0
+CALIBRANT_THICKNESS_MAX_MM = 40.0
 
 
 @dataclass(frozen=True)
@@ -23,6 +43,20 @@ class H5SessionFilter:
     values: Sequence[Any] | set[Any] | None = None
     lower: Any = None
     upper: Any = None
+
+
+def calibrant_thickness_h5_filters(
+    *,
+    column: str = CALIBRANT_THICKNESS_COLUMN,
+    min_mm: float = CALIBRANT_THICKNESS_MIN_MM,
+    max_mm: float = CALIBRANT_THICKNESS_MAX_MM,
+) -> list[H5SessionFilter]:
+    """H5-level filters for calibrant thickness metadata before frame loading."""
+    return [
+        H5SessionFilter(column=column, op="notna"),
+        H5SessionFilter(column=column, op=">=", value=float(min_mm)),
+        H5SessionFilter(column=column, op="<=", value=float(max_mm)),
+    ]
 
 
 def _decode(value: Any) -> Any:
@@ -227,6 +261,108 @@ def _filter_mask(df: pd.DataFrame, filter_spec: H5SessionFilter) -> pd.Series:
     raise ValueError(f"Unsupported H5 session filter op: {filter_spec.op!r}.")
 
 
+def _set_category(set_group: h5py.Group) -> str:
+    return str(
+        _decode(
+            set_group.attrs.get(
+                "measurement_type_category",
+                set_group.attrs.get("category", ""),
+            )
+        )
+        or ""
+    ).upper()
+
+
+def _set_sample_thickness_mm(set_group: h5py.Group) -> float | None:
+    for key in ("sample_thickness_mm", "sample_thickness", "thickness_raw_mm"):
+        value = _positive_float(set_group.attrs.get(key))
+        if value is not None:
+            return value
+    acquisition = set_group.get("acquisition")
+    if isinstance(acquisition, h5py.Group):
+        acquisition_fields = _scalar_fields(acquisition)
+        for key in ("sample_thickness_mm", "sample_thickness", "thickness_raw_mm"):
+            value = _positive_float(acquisition_fields.get(key))
+            if value is not None:
+                return value
+    metadata = _json_dataset(set_group, "metadata", default={})
+    if isinstance(metadata, dict):
+        for key in ("sample_thickness_mm", "sample_thickness", "thickness_raw_mm"):
+            value = _positive_float(metadata.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _session_sample_set_summary(session: h5py.Group) -> dict[str, Any]:
+    sets = session.get("sets")
+    if not isinstance(sets, h5py.Group):
+        return {}
+
+    q_min_values = []
+    q_max_values = []
+    distance_values = []
+    sample_set_count = 0
+    sample_poni_count = 0
+    sample_thickness_count = 0
+    sample_thickness_values = []
+    for set_name in sorted(sets):
+        set_group = sets[set_name]
+        if not isinstance(set_group, h5py.Group):
+            continue
+        category = _set_category(set_group)
+        if category and category != "SAMPLE":
+            continue
+        sample_set_count += 1
+        sample_thickness = _set_sample_thickness_mm(set_group)
+        if sample_thickness is not None:
+            sample_thickness_count += 1
+            sample_thickness_values.append(sample_thickness)
+        poni_text = _text_dataset(set_group, "artifacts/poni")
+        if poni_text is None:
+            continue
+        sample_poni_count += 1
+        try:
+            q_min, q_max, distance_m = estimate_poni_q_range_nm_inv(str(poni_text))
+        except Exception:
+            q_min, q_max, distance_m = np.nan, np.nan, np.nan
+        q_min_values.append(q_min)
+        q_max_values.append(q_max)
+        distance_values.append(distance_m)
+
+    finite_q_min = [value for value in q_min_values if np.isfinite(value)]
+    finite_q_max = [value for value in q_max_values if np.isfinite(value)]
+    finite_distance = [value for value in distance_values if np.isfinite(value)]
+    finite_thickness = [
+        value for value in sample_thickness_values if np.isfinite(value)
+    ]
+    return {
+        "h5_sample_set_count": int(sample_set_count),
+        "h5_sample_poni_count": int(sample_poni_count),
+        "h5_sample_all_sets_have_poni": bool(
+            sample_set_count > 0 and sample_set_count == sample_poni_count
+        ),
+        "h5_sample_thickness_count": int(sample_thickness_count),
+        "h5_sample_all_sets_have_thickness": bool(
+            sample_set_count > 0 and sample_set_count == sample_thickness_count
+        ),
+        "sample_thickness_mm_min": (
+            float(np.nanmin(finite_thickness)) if finite_thickness else np.nan
+        ),
+        "sample_thickness_mm_max": (
+            float(np.nanmax(finite_thickness)) if finite_thickness else np.nan
+        ),
+        "poni_q_min_nm_inv": float(np.nanmin(finite_q_min)) if finite_q_min else np.nan,
+        "poni_q_max_nm_inv": float(np.nanmin(finite_q_max)) if finite_q_max else np.nan,
+        "poni_q_max_nm_inv_max": (
+            float(np.nanmax(finite_q_max)) if finite_q_max else np.nan
+        ),
+        "poni_calculated_distance_m": (
+            float(np.nanmax(finite_distance)) if finite_distance else np.nan
+        ),
+    }
+
+
 def _session_metadata_row(
     *,
     file_path: Path,
@@ -244,6 +380,36 @@ def _session_metadata_row(
     }
     row.update(_attrs(session))
     row.setdefault("format", row["container_format"])
+    sample = session.get("sample")
+    if isinstance(sample, h5py.Group):
+        sample_attrs = _attrs(sample)
+        for key, value in sample_attrs.items():
+            row[f"sample_{key}"] = value
+        for key in (
+            "additional_info",
+            "age",
+            "biopsy",
+            "birads",
+            "birads_category",
+            "breast_density",
+            "mri",
+            "race_ethnicity",
+            "side",
+            "specimen_status",
+        ):
+            if key in sample_attrs:
+                row[key] = sample_attrs[key]
+        patient_name = _text_dataset(sample, "patient_name")
+        specimen_name = _text_dataset(sample, "name")
+        sample_type = _text_dataset(sample, "sample_type")
+        if patient_name is not None:
+            row["patientId"] = patient_name
+            row["patient_name"] = patient_name
+        if specimen_name is not None:
+            row["specimenId"] = specimen_name
+            row["name"] = specimen_name
+        if sample_type is not None:
+            row["sample_type"] = sample_type
 
     if archive_group_name is not None:
         row["archive_group"] = archive_group_name
@@ -255,10 +421,13 @@ def _session_metadata_row(
             )
             for key, value in archive_group_attrs.items():
                 row[f"archive_group_{key}"] = value
+                if key in PROMOTED_ARCHIVE_GROUP_FIELDS:
+                    row[key] = value
     else:
         row["archive_session_path"] = session.name
 
     row["session_category"] = row.get("category")
+    row.update(_session_sample_set_summary(session))
     return row
 
 
@@ -345,6 +514,167 @@ def filter_h5_sessions(
     if max_sessions is not None:
         session_df = session_df.head(max_sessions).copy()
     return session_df.reset_index(drop=True)
+
+
+def list_h5_measurement_sets(
+    file_path: str | Path,
+    *,
+    session_df: pd.DataFrame | None = None,
+    session_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+    session_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    session_started_at_min: str | pd.Timestamp | None = None,
+    set_category: str | list[str] | tuple[str, ...] | set[str] | None = "SAMPLE",
+    drop_missing_sample_thickness: bool = False,
+    max_sessions: int | None = None,
+) -> pd.DataFrame:
+    """List H5 measurement-set metadata without reading detector frames.
+
+    Returned rows are one row per session set. No count is multiplied by
+    ``h5_sample_set_count``; measurement statistics should use ``len(df)``.
+    """
+    file_path = Path(file_path)
+    if session_df is None:
+        session_df = filter_h5_sessions(
+            file_path,
+            filters=session_filters,
+            session_category=session_category,
+            session_started_at_min=session_started_at_min,
+            max_sessions=max_sessions,
+        )
+    elif max_sessions is not None:
+        session_df = session_df.head(max_sessions).copy()
+
+    rows: list[dict[str, Any]] = []
+    set_allowed = _allowed_values(set_category)
+    with h5py.File(file_path, "r") as h5:
+        for _, session_row in session_df.iterrows():
+            session_path = session_row.get("session_path")
+            if not isinstance(session_path, str) or session_path not in h5:
+                continue
+            session = h5[session_path]
+            if not isinstance(session, h5py.Group):
+                continue
+            sets = session.get("sets")
+            if not isinstance(sets, h5py.Group):
+                continue
+
+            session_meta = session_row.to_dict()
+            for set_name in sorted(sets):
+                set_group = sets[set_name]
+                if not isinstance(set_group, h5py.Group):
+                    continue
+                category = _set_category(set_group)
+                if not _matches_allowed(category, set_allowed):
+                    continue
+
+                row = {
+                    **session_meta,
+                    "id": set_name,
+                    "meas_name": set_name,
+                    "set_name": set_name,
+                    "set_path": set_group.name,
+                    "measurement_type_category": category,
+                    **_attrs(set_group),
+                }
+                acquisition = set_group.get("acquisition")
+                if isinstance(acquisition, h5py.Group):
+                    row.update(_scalar_fields(acquisition))
+                _standardize_clinical_ids(row)
+
+                sample_thickness = _set_sample_thickness_mm(set_group)
+                row["sample_thickness_mm"] = sample_thickness
+                if drop_missing_sample_thickness and sample_thickness is None:
+                    continue
+
+                poni_text = _text_dataset(set_group, "artifacts/poni")
+                if poni_text is not None:
+                    row["ponifile"] = poni_text
+                    try:
+                        q_min, q_max, distance_m = estimate_poni_q_range_nm_inv(
+                            str(poni_text)
+                        )
+                    except Exception:
+                        q_min, q_max, distance_m = np.nan, np.nan, np.nan
+                    row["poni_q_min_nm_inv"] = q_min
+                    row["poni_q_max_nm_inv"] = q_max
+                    row["poni_calculated_distance_m"] = distance_m
+                rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def filter_h5_measurement_sets(
+    file_path: str | Path,
+    session_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+    *,
+    measurement_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+    session_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    session_started_at_min: str | pd.Timestamp | None = None,
+    set_category: str | list[str] | tuple[str, ...] | set[str] | None = "SAMPLE",
+    drop_missing_sample_thickness: bool = False,
+    max_sessions: int | None = None,
+) -> pd.DataFrame:
+    """Filter H5 metadata and return one row per passing measurement set."""
+    measurement_df = list_h5_measurement_sets(
+        file_path,
+        session_filters=session_filters,
+        session_category=session_category,
+        session_started_at_min=session_started_at_min,
+        set_category=set_category,
+        drop_missing_sample_thickness=drop_missing_sample_thickness,
+        max_sessions=max_sessions,
+    )
+    for filter_spec in [_coerce_filter(spec) for spec in measurement_filters or []]:
+        measurement_df = measurement_df.loc[
+            _filter_mask(measurement_df, filter_spec)
+        ].copy()
+    return measurement_df.reset_index(drop=True)
+
+
+def h5_measurement_set_counts(
+    df: pd.DataFrame,
+    *,
+    diagnosis_column: str = "specimen_status",
+) -> dict[str, Any]:
+    """Count measurement-set rows, patients, specimens, and diagnosis values."""
+    diagnosis = (
+        df[diagnosis_column].fillna("NA").astype(str).str.strip().str.upper()
+        if diagnosis_column in df.columns
+        else pd.Series([], dtype="object")
+    )
+    diagnosis = diagnosis.replace("", "NA")
+    return {
+        "measurements": int(len(df)),
+        "patients": int(df["patientId"].nunique()) if "patientId" in df else 0,
+        "specimens": int(df["specimenId"].nunique()) if "specimenId" in df else 0,
+        "diagnosis_variants": int(diagnosis.nunique()),
+        "diagnosis_counts": diagnosis.value_counts().to_dict(),
+    }
+
+
+def h5_filter_statistics(
+    before_df: pd.DataFrame,
+    after_df: pd.DataFrame,
+    *,
+    diagnosis_column: str = "specimen_status",
+) -> dict[str, Any]:
+    """Return before/after measurement-set counts for one H5 filter step."""
+    before = h5_measurement_set_counts(
+        before_df,
+        diagnosis_column=diagnosis_column,
+    )
+    after = h5_measurement_set_counts(
+        after_df,
+        diagnosis_column=diagnosis_column,
+    )
+    return {
+        "before": before,
+        "after": after,
+        "dropped": {
+            key: before[key] - after[key]
+            for key in ("measurements", "patients", "specimens", "diagnosis_variants")
+        },
+    }
 
 
 def _dataset(group: h5py.Group, rel_path: str) -> np.ndarray | None:

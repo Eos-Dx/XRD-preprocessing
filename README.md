@@ -10,21 +10,23 @@ Core scope:
 - Poisson-only signal-to-noise ratio in dB from pyFAI sigma
 - AgBH monochromaticity QC scoring from calibration profiles
 - reusable metadata and SNR row filters
+- sklearn-style product transformers for H5 reading, product metadata columns,
+  paired-group filters, q-range metadata, and payload-column dropping
 
 Standard product preprocessing order:
 
 ```text
 H5 container
--> H5SessionFilter(product/user supplied attrs)
--> h5_to_df(drop_missing_sample_thickness=True)
--> ColumnValueFilter(optional DataFrame metadata audit)
--> MetadataFilter(optional product/user supplied metadata)
+-> H5SessionFilter(product/user supplied attrs: date/status/PONI q/thickness availability)
+-> H5ToDataFrameTransformer(drop_missing_sample_thickness=True)
+-> ProductColumnBuilder / ProductStatusGroupFilter(product label policy)
 -> FaultyPixelDetector
--> AzimuthalIntegration(error_model="poisson", thickness_reference_mm=<explicit float>)
+-> AzimuthalIntegration(error_model="poisson", thickness_reference_column="calibrant_thickness_mm")
 -> SNRTransformer(snr_method="poisson")
 -> SNRFilter(min_snr_db=20.0)
 -> PatientSpecimenValidityFilter
 -> QRangeNormalizer(q_min=6.7, q_max=7.1)
+-> RadialProfileValueFilter(optional product signal gate)
 ```
 
 Product preprocessing requires container v0.3 with original RAW GFRM artifacts.
@@ -36,10 +38,19 @@ Thickness contract:
 ```text
 one measurement point has one sample thickness
 missing sample thickness means no correct azimuthal integration
-AGBH/reference thickness can differ between calibration sessions
-AGBH/reference thickness should be present in H5/product metadata as agbh_thickness_mm
-AzimuthalIntegration can use thickness_reference_column="agbh_thickness_mm"
+calibrant/reference thickness can differ between calibration sessions
+calibrant/reference thickness should be present in H5/product metadata as calibrant_thickness_mm
+AzimuthalIntegration can use thickness_reference_column="calibrant_thickness_mm"
 product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
+```
+
+Transformer contract:
+
+```text
+v0.1.2-beta product movement should be expressed as transformers
+every DataFrame-changing product step should support fit_transform
+functions remain available for low-level direct use and backward compatibility
+product repositories supply YAML/JSON rules and compose XRD-preprocessing transformers
 ```
 
 Protocol/spectrum boundary:
@@ -51,6 +62,15 @@ xrd_preprocessing applies explicit filters supplied by product/user
 product metadata lives outside the library in controlled JSON/H5 attrs/manifests
 example product-owned fields: spectrum_status, protocol_status,
 calibration_quality_status, product_selection_status, patientId, specimenId
+```
+
+H5-level filtering rule:
+
+```text
+If a filter can be computed from H5 attrs/metadata/PONI without loading frames,
+apply it through H5SessionFilter before h5_to_df.
+Examples: started_at, specimen_status, patientId/specimenId, side,
+poni_q_max_nm_inv, h5_sample_all_sets_have_thickness.
 ```
 
 Open product-development questions:
@@ -96,6 +116,7 @@ PYTHONPATH=/Users/sad/dev/xrd-analysis/src:src pytest -q
 Examples:
 
 ```bash
+python examples/h5_session_filter_demo.py --required-q-max 23
 marimo run examples/faulty_pixel_detection_demo.py
 ```
 

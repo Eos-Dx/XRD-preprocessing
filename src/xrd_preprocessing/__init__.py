@@ -12,15 +12,35 @@ from .agbh import (
     agbh_kbeta_windows,
     calculate_agbh_monochromaticity,
 )
-from .azimuthal import AzimuthalIntegration, perform_azimuthal_integration
+from .azimuthal import (
+    AzimuthalIntegration,
+    estimate_poni_q_range_nm_inv,
+    perform_azimuthal_integration,
+)
 from .filters import (
     ColumnValueFilter,
     MetadataFilter,
     PatientFilter,
     PatientSpecimenValidityFilter,
+    PoniQRangeFilter,
+    RadialProfileValueFilter,
     SNRFilter,
+    SpecimenValidityFilter,
 )
-from .h5 import H5SessionFilter, filter_h5_sessions, h5_to_df, list_h5_sessions
+from .h5 import (
+    CALIBRANT_THICKNESS_COLUMN,
+    CALIBRANT_THICKNESS_MAX_MM,
+    CALIBRANT_THICKNESS_MIN_MM,
+    H5SessionFilter,
+    calibrant_thickness_h5_filters,
+    filter_h5_measurement_sets,
+    filter_h5_sessions,
+    h5_filter_statistics,
+    h5_measurement_set_counts,
+    h5_to_df,
+    list_h5_measurement_sets,
+    list_h5_sessions,
+)
 from .faulty_pixels import (
     FAULTY_REASON_CODES,
     FAULTY_REASON_NEGATIVE,
@@ -36,6 +56,15 @@ from .faulty_pixels import (
     detect_hot_pixels,
 )
 from .normalization import QRangeNormalizer, normalize_profile_by_q_range
+from .product_transformers import (
+    ConstantQRangeTransformer,
+    DropColumnsTransformer,
+    H5ToDataFrameTransformer,
+    PairedGroupFilter,
+    ProductColumnBuilder,
+    ProductStatusGroupFilter,
+    RequiredColumnsTransformer,
+)
 from .gfrm import (
     decode_gfrm,
     extract_gfrm_archive,
@@ -62,6 +91,11 @@ __all__ = [
     "AgBHMonochromaticitySelection",
     "AgBHMonochromaticityScorer",
     "ColumnValueFilter",
+    "CALIBRANT_THICKNESS_COLUMN",
+    "CALIBRANT_THICKNESS_MAX_MM",
+    "CALIBRANT_THICKNESS_MIN_MM",
+    "ConstantQRangeTransformer",
+    "DropColumnsTransformer",
     "FAULTY_REASON_CODES",
     "FAULTY_REASON_NEGATIVE",
     "FAULTY_REASON_NONFINITE",
@@ -69,14 +103,23 @@ __all__ = [
     "FAULTY_REASON_SATURATED",
     "FaultyPixelDetector",
     "H5SessionFilter",
+    "H5ToDataFrameTransformer",
+    "calibrant_thickness_h5_filters",
     "HotPixelDetector",
     "MetadataFilter",
     "PatientFilter",
     "PatientSpecimenValidityFilter",
+    "PairedGroupFilter",
+    "PoniQRangeFilter",
+    "ProductColumnBuilder",
+    "ProductStatusGroupFilter",
+    "RadialProfileValueFilter",
     "QRangeNormalizer",
     "RadialProfileSnapshot",
+    "RequiredColumnsTransformer",
     "SNRFilter",
     "SNRTransformer",
+    "SpecimenValidityFilter",
     "agbh_alpha_peaks",
     "agbh_kbeta_windows",
     "calculate_snr",
@@ -90,8 +133,13 @@ __all__ = [
     "extract_gfrm_archive",
     "gfrm_conversion_metadata",
     "gfrm_to_photons",
+    "filter_h5_measurement_sets",
     "filter_h5_sessions",
+    "h5_filter_statistics",
+    "h5_measurement_set_counts",
+    "estimate_poni_q_range_nm_inv",
     "h5_to_df",
+    "list_h5_measurement_sets",
     "list_h5_sessions",
     "normalize_profile_by_q_range",
     "parse_bruker_header_preview",

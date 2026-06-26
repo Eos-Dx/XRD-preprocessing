@@ -42,9 +42,7 @@ def _():
 
     from xrd_preprocessing import (
         AzimuthalIntegration,
-        ColumnValueFilter,
         FaultyPixelDetector,
-        MetadataFilter,
         PatientSpecimenValidityFilter,
         QRangeNormalizer,
         RadialProfileSnapshot,
@@ -54,9 +52,7 @@ def _():
 
     return (
         AzimuthalIntegration,
-        ColumnValueFilter,
         FaultyPixelDetector,
-        MetadataFilter,
         PatientSpecimenValidityFilter,
         Pipeline,
         QRangeNormalizer,
@@ -79,8 +75,7 @@ def _(mo):
     This notebook uses one product path only:
 
     ```text
-    GFRM -> photons -> DataFrame with sample_thickness_mm
-    -> date and diagnosis filters
+    already H5-selected rows -> GFRM -> photons -> DataFrame with sample_thickness_mm
     -> FaultyPixelDetector
     -> AzimuthalIntegration, q = 2..23 nm^-1
     -> SNRTransformer
@@ -89,7 +84,9 @@ def _(mo):
     -> QRangeNormalizer
     ```
 
-    There is no comparison without faulty-pixel masking in this notebook.
+    This is a loose-GFRM demonstration, not an H5-container loader. In product
+    container workflows, date, diagnosis/status, PONI q coverage, and other
+    metadata filters are applied with `H5SessionFilter` before `h5_to_df`.
     """)
     return
 
@@ -97,7 +94,7 @@ def _(mo):
 @app.cell
 def _():
     thickness_reference_mm = 11.0
-    npt = 900
+    npt = 100
     return npt, thickness_reference_mm
 
 
@@ -124,12 +121,15 @@ def _(input_df, mo, thickness_reference_mm):
     _thickness_values = sorted(input_df["sample_thickness_mm"].unique().tolist())
     mo.md(
         f"""
-        Step 1. GFRM conversion and DataFrame creation.
+        Step 1. Already H5-selected GFRM rows.
 
         Each Bruker GFRM frame was decoded with FabIO and converted to EOS
         photon estimates. The DataFrame already contains the required
-        `sample_thickness_mm` column. This example adds demo clinical metadata
-        columns so the product filters can be demonstrated.
+        `sample_thickness_mm` column. This loose-GFRM example adds demo clinical
+        metadata only for later patient/specimen validity grouping.
+
+        Real product container workflows should apply date, diagnosis/status,
+        and PONI q-coverage filters at H5 level before `h5_to_df`.
 
         ```text
         frames = {len(input_df)}
@@ -137,7 +137,7 @@ def _(input_df, mo, thickness_reference_mm):
         thickness_reference_mm = {thickness_reference_mm}
         sample_thickness_mm values = {_thickness_values}
         measurement_data source = RAW GFRM -> gfrm_to_photons
-        clinical columns = measurementDate, diagnosis, patientId, specimenId
+        grouping columns = patientId, specimenId
         ```
         """
     )
@@ -145,53 +145,12 @@ def _(input_df, mo, thickness_reference_mm):
 
 
 @app.cell
-def _(ColumnValueFilter, MetadataFilter, input_df):
-    trusted_date_filter = ColumnValueFilter(
-        "measurementDate",
-        op="date>=",
-        value="2026-06-01",
-    )
-    diagnosis_filter = MetadataFilter(
-        "diagnosis",
-        op="in",
-        values=["BENIGN", "CANCER"],
-    )
-    date_filtered_df = trusted_date_filter.fit_transform(input_df)
-    cohort_df = diagnosis_filter.fit_transform(date_filtered_df)
-    early_filter_stats = {
-        "date": trusted_date_filter.stats_,
-        "diagnosis": diagnosis_filter.stats_,
-    }
-    return cohort_df, early_filter_stats
-
-
-@app.cell
-def _(cohort_df, early_filter_stats, mo):
-    mo.md(
-        f"""
-        Step 2. Early metadata filtering.
-
-        Date filtering is applied immediately after DataFrame creation because
-        data before trusted protocol dates must not enter image processing.
-        Diagnosis filtering defines the product cohort.
-
-        ```text
-        date rows in/pass = {early_filter_stats["date"]["rows_in"]}/{early_filter_stats["date"]["rows_pass"]}
-        diagnosis rows in/pass = {early_filter_stats["diagnosis"]["rows_in"]}/{early_filter_stats["diagnosis"]["rows_pass"]}
-        rows after early filters = {len(cohort_df)}
-        ```
-        """
-    )
-    return
-
-
-@app.cell
-def _(FaultyPixelDetector, cohort_df):
+def _(FaultyPixelDetector, input_df):
     faulty_detector = FaultyPixelDetector(
         local_hot_min_value=500.0,
         exclude_beam_center_radius=0.04,
     )
-    faulty_df = faulty_detector.fit_transform(cohort_df)
+    faulty_df = faulty_detector.fit_transform(input_df)
     faulty_stats = faulty_detector.stats_
     return faulty_df, faulty_stats
 
@@ -203,7 +162,7 @@ def _(faulty_df, faulty_stats, helpers, mo):
         [
             mo.md(
                 f"""
-                Step 3. Faulty-pixel detection.
+                Step 2. Measurement-level faulty-pixel detection.
 
                 NaN/inf, negative values, and values above 500 are excluded.
                 Beam-zone pixels are not counted as faulty pixels.
@@ -245,7 +204,7 @@ def _(helpers, integrated_df, mo):
     mo.vstack(
         [
             mo.md("""
-            Step 4. Azimuthal integration.
+            Step 3. Azimuthal integration.
 
             The pyFAI integrator uses PONI geometry. The faulty-pixel mask is
             passed per row. Integration range is q = 2..23 nm^-1.
@@ -274,7 +233,7 @@ def _(helpers, mo, snr_df):
     mo.vstack(
         [
             mo.md("""
-            Step 5. Poisson SNR analysis.
+            Step 4. Poisson SNR analysis.
 
             `radial_profile_sigma` from pyFAI is used to calculate SNR in dB.
             The profile legend and bar labels show SNR for every curve.
@@ -305,7 +264,7 @@ def _(helpers, mo, snr_filter_stats, snr_filtered_df):
         [
             mo.md(
                 f"""
-                Step 6. SNR filtering.
+                Step 5. SNR filtering.
 
                 Curves with `snr_db < 20` or missing SNR are removed.
 
@@ -345,7 +304,7 @@ def _(clinical_validity_stats, clinically_valid_df, helpers, mo):
         [
             mo.md(
                 f"""
-                Step 7. Patient/specimen validity filtering.
+                Step 6. Patient/specimen validity filtering.
 
                 This runs after SNR filtering, so specimen measurement counts
                 are based only on profiles that survived signal-quality QC.
@@ -386,7 +345,7 @@ def _(helpers, mo, normalized_df):
     mo.vstack(
         [
             mo.md("""
-            Step 8. Q-range normalization.
+            Step 7. Q-range normalization.
 
             Remaining curves are normalized by the integrated area in
             q = 6.7..7.1 nm^-1 and plotted together.
@@ -422,9 +381,7 @@ def _(mo, normalized_df):
 @app.cell
 def _(
     AzimuthalIntegration,
-    ColumnValueFilter,
     FaultyPixelDetector,
-    MetadataFilter,
     PatientSpecimenValidityFilter,
     Pipeline,
     QRangeNormalizer,
@@ -438,14 +395,6 @@ def _(
     save_pipeline_stages = True
     product_pipeline = Pipeline(
         [
-            (
-                "trusted_date",
-                ColumnValueFilter("measurementDate", op="date>=", value="2026-06-01"),
-            ),
-            (
-                "diagnosis",
-                MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"]),
-            ),
             (
                 "faulty_pixels",
                 FaultyPixelDetector(

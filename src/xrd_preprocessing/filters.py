@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from ._compat import BaseEstimator, TransformerMixin
+from .azimuthal import estimate_poni_q_range_nm_inv
 
 
 class ColumnValueFilter(TransformerMixin, BaseEstimator):
@@ -158,6 +159,84 @@ class PatientFilter(MetadataFilter):
     """MetadataFilter alias for patient/sample selection stages."""
 
 
+class SpecimenValidityFilter(TransformerMixin, BaseEstimator):
+    """Specimen-level replicate validity filter."""
+
+    def __init__(
+        self,
+        specimen_column: str = "specimenId",
+        *,
+        min_measurements_per_specimen: int = 2,
+        drop: bool = True,
+        reset_index: bool = True,
+        validity_column: str = "specimen_valid",
+        reason_column: str = "specimen_validity_reason",
+    ) -> None:
+        self.specimen_column = specimen_column
+        self.min_measurements_per_specimen = int(min_measurements_per_specimen)
+        self.drop = bool(drop)
+        self.reset_index = bool(reset_index)
+        self.validity_column = validity_column
+        self.reason_column = reason_column
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y=None):
+        _ = X
+        _ = y
+        return self
+
+    @staticmethod
+    def _present(series: pd.Series) -> pd.Series:
+        return series.notna() & series.astype(str).str.strip().ne("")
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        if self.specimen_column not in X.columns:
+            raise KeyError(f"Missing required specimen ID column: {self.specimen_column}")
+        if self.min_measurements_per_specimen < 1:
+            raise ValueError("min_measurements_per_specimen must be >= 1.")
+
+        out = X.copy()
+        specimen = out[self.specimen_column]
+        has_specimen = self._present(specimen)
+        valid_specimen_frame = out.loc[has_specimen, [self.specimen_column]]
+        specimen_counts = valid_specimen_frame.groupby(
+            self.specimen_column,
+            sort=False,
+            dropna=False,
+        ).size()
+        counts = [
+            int(specimen_counts.get(specimen_value, 0))
+            for specimen_value in specimen
+        ]
+        out["specimen_measurement_count"] = counts
+        valid = has_specimen & (
+            out["specimen_measurement_count"] >= self.min_measurements_per_specimen
+        )
+        out[self.validity_column] = valid.to_numpy(dtype=bool)
+        out[self.reason_column] = "valid"
+        out.loc[~has_specimen, self.reason_column] = "missing_specimen_id"
+        out.loc[
+            has_specimen
+            & (out["specimen_measurement_count"] < self.min_measurements_per_specimen),
+            self.reason_column,
+        ] = "specimen_measurements_below_minimum"
+        self.stats_ = {
+            "filter_type": "specimen_validity",
+            "specimen_column": self.specimen_column,
+            "min_measurements_per_specimen": self.min_measurements_per_specimen,
+            "rows_in": int(len(out)),
+            "rows_pass": int(np.sum(valid)),
+            "rows_fail": int(len(out) - np.sum(valid)),
+            "specimens_in": int(valid_specimen_frame.drop_duplicates().shape[0]),
+            "specimens_pass": int(out.loc[valid, self.specimen_column].nunique()),
+        }
+        if self.drop:
+            out = out.loc[out[self.validity_column]].copy()
+            if self.reset_index:
+                out.reset_index(drop=True, inplace=True)
+        return out
+
+
 class PatientSpecimenValidityFilter(TransformerMixin, BaseEstimator):
     """Group-level validity filter for clinical patient/specimen replicates."""
 
@@ -273,6 +352,299 @@ class PatientSpecimenValidityFilter(TransformerMixin, BaseEstimator):
         }
         if self.drop:
             out = out.loc[out[self.validity_column]].copy()
+            if self.reset_index:
+                out.reset_index(drop=True, inplace=True)
+        return out
+
+
+class PoniQRangeFilter(TransformerMixin, BaseEstimator):
+    """Filter rows whose PONI geometry cannot cover the requested q range."""
+
+    def __init__(
+        self,
+        *,
+        required_q_max_nm_inv: float,
+        poni_column: str = "ponifile",
+        data_column: str | None = "measurement_data",
+        shape_column: str | None = None,
+        q_min_column: str = "poni_q_min_nm_inv",
+        q_max_column: str = "poni_q_max_nm_inv",
+        distance_column: str = "poni_calculated_distance_m",
+        pass_column: str = "poni_q_range_pass",
+        drop: bool = True,
+        reset_index: bool = True,
+        thickness_adjustment: bool = False,
+        require_thickness_adjustment: bool = False,
+        sample_thickness_column: str = "sample_thickness_mm",
+        thickness_reference_mm: float | None = None,
+        thickness_reference_column: str | None = None,
+    ) -> None:
+        self.required_q_max_nm_inv = float(required_q_max_nm_inv)
+        self.poni_column = poni_column
+        self.data_column = data_column
+        self.shape_column = shape_column
+        self.q_min_column = q_min_column
+        self.q_max_column = q_max_column
+        self.distance_column = distance_column
+        self.pass_column = pass_column
+        self.drop = bool(drop)
+        self.reset_index = bool(reset_index)
+        self.thickness_adjustment = bool(thickness_adjustment)
+        self.require_thickness_adjustment = bool(require_thickness_adjustment)
+        self.sample_thickness_column = sample_thickness_column
+        self.thickness_reference_mm = thickness_reference_mm
+        self.thickness_reference_column = thickness_reference_column
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y=None):
+        _ = X
+        _ = y
+        return self
+
+    def _row_shape(self, row: pd.Series) -> tuple[int, int] | None:
+        if self.shape_column is not None:
+            if self.shape_column not in row.index:
+                raise KeyError(f"Column '{self.shape_column}' not found in DataFrame.")
+            value = row[self.shape_column]
+            if value is None or (isinstance(value, float) and np.isnan(value)):
+                return None
+            shape = tuple(int(item) for item in value)
+            if len(shape) != 2:
+                raise ValueError(f"Shape column '{self.shape_column}' must contain 2 values.")
+            return shape
+        if self.data_column is not None and self.data_column in row.index:
+            data = row[self.data_column]
+            if hasattr(data, "shape") and len(data.shape) >= 2:
+                return int(data.shape[0]), int(data.shape[1])
+        return None
+
+    def _reference_thickness_mm(self, row: pd.Series) -> float:
+        if self.thickness_reference_column is not None:
+            if self.thickness_reference_column not in row.index:
+                raise KeyError(
+                    f"Column '{self.thickness_reference_column}' not found in DataFrame."
+                )
+            reference = pd.to_numeric(
+                pd.Series([row[self.thickness_reference_column]]),
+                errors="coerce",
+            ).iloc[0]
+            if not np.isfinite(reference):
+                raise ValueError(
+                    "Invalid thickness reference value in column: "
+                    f"{self.thickness_reference_column}"
+                )
+            return float(reference)
+        if self.thickness_reference_mm is None:
+            return 0.0
+        return float(self.thickness_reference_mm)
+
+    def _sample_thickness_mm(self, row: pd.Series) -> float | None:
+        if not self.thickness_adjustment:
+            return None
+        if self.sample_thickness_column not in row.index:
+            if self.require_thickness_adjustment:
+                raise KeyError(
+                    f"Column '{self.sample_thickness_column}' not found in DataFrame."
+                )
+            return None
+        thickness = pd.to_numeric(
+            pd.Series([row[self.sample_thickness_column]]),
+            errors="coerce",
+        ).iloc[0]
+        if not np.isfinite(thickness):
+            if self.require_thickness_adjustment:
+                raise ValueError(
+                    f"Invalid thickness value in column: {self.sample_thickness_column}"
+                )
+            return None
+        return float(thickness)
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        if self.poni_column not in X.columns:
+            raise KeyError(f"Column '{self.poni_column}' not found in DataFrame.")
+
+        out = X.copy()
+        q_min_values = []
+        q_max_values = []
+        distance_values = []
+        passed_values = []
+        for _row in out.itertuples(index=False):
+            row = pd.Series(_row._asdict())
+            q_min, q_max, distance_m = estimate_poni_q_range_nm_inv(
+                str(row[self.poni_column]),
+                shape=self._row_shape(row),
+                sample_thickness_mm=self._sample_thickness_mm(row),
+                thickness_reference_mm=self._reference_thickness_mm(row),
+            )
+            q_min_values.append(q_min)
+            q_max_values.append(q_max)
+            distance_values.append(distance_m)
+            passed_values.append(q_max >= self.required_q_max_nm_inv)
+
+        passed = np.asarray(passed_values, dtype=bool)
+        out[self.q_min_column] = q_min_values
+        out[self.q_max_column] = q_max_values
+        out[self.distance_column] = distance_values
+        out[self.pass_column] = passed
+        failed_ids = (
+            out.loc[~out[self.pass_column], "sample_id"].astype(str).tolist()
+            if "sample_id" in out.columns
+            else []
+        )
+        self.stats_ = {
+            "filter_type": "poni_q_range",
+            "required_q_max_nm_inv": self.required_q_max_nm_inv,
+            "poni_column": self.poni_column,
+            "q_max_column": self.q_max_column,
+            "rows_in": int(len(out)),
+            "rows_pass": int(np.sum(passed)),
+            "rows_fail": int(len(out) - np.sum(passed)),
+            "min_q_max_nm_inv": float(np.nanmin(q_max_values)) if q_max_values else np.nan,
+            "max_q_max_nm_inv": float(np.nanmax(q_max_values)) if q_max_values else np.nan,
+            "failed_ids": failed_ids,
+            "thickness_adjustment": self.thickness_adjustment,
+            "thickness_reference_mm": self.thickness_reference_mm,
+            "thickness_reference_column": self.thickness_reference_column,
+        }
+        if self.drop:
+            out = out.loc[out[self.pass_column]].copy()
+            if self.reset_index:
+                out.reset_index(drop=True, inplace=True)
+        return out
+
+
+class RadialProfileValueFilter(TransformerMixin, BaseEstimator):
+    """Filter radial profiles by intensity near a target q value."""
+
+    def __init__(
+        self,
+        *,
+        q_value_nm_inv: float,
+        threshold: float,
+        op: str = ">",
+        q_column: str = "q_range",
+        profile_column: str = "radial_profile_data",
+        pass_column: str = "radial_profile_value_pass",
+        value_column: str = "radial_profile_value_at_q",
+        nearest_q_column: str = "radial_profile_nearest_q_nm_inv",
+        q_delta_column: str = "radial_profile_q_delta_nm_inv",
+        max_q_delta_nm_inv: float | None = None,
+        drop: bool = True,
+        reset_index: bool = True,
+    ) -> None:
+        self.q_value_nm_inv = float(q_value_nm_inv)
+        self.threshold = float(threshold)
+        self.op = str(op)
+        self.q_column = q_column
+        self.profile_column = profile_column
+        self.pass_column = pass_column
+        self.value_column = value_column
+        self.nearest_q_column = nearest_q_column
+        self.q_delta_column = q_delta_column
+        self.max_q_delta_nm_inv = (
+            None if max_q_delta_nm_inv is None else float(max_q_delta_nm_inv)
+        )
+        self.drop = bool(drop)
+        self.reset_index = bool(reset_index)
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y=None):
+        _ = X
+        _ = y
+        return self
+
+    def _compare(self, values: np.ndarray) -> np.ndarray:
+        op = self.op.lower()
+        if op in {">", "gt"}:
+            return values > self.threshold
+        if op in {">=", "ge"}:
+            return values >= self.threshold
+        if op in {"<", "lt"}:
+            return values < self.threshold
+        if op in {"<=", "le"}:
+            return values <= self.threshold
+        raise ValueError(f"Unsupported radial profile value filter op: {self.op}")
+
+    def _nearest_value(self, q_values: Any, profile_values: Any) -> tuple[float, float, float]:
+        q = np.asarray(q_values, dtype=float)
+        profile = np.asarray(profile_values, dtype=float)
+        if q.shape != profile.shape:
+            raise ValueError(
+                f"Columns '{self.q_column}' and '{self.profile_column}' must have same shape."
+            )
+        finite = np.isfinite(q) & np.isfinite(profile)
+        if not np.any(finite):
+            return np.nan, np.nan, np.nan
+        q_finite = q[finite]
+        profile_finite = profile[finite]
+        nearest_index = int(np.argmin(np.abs(q_finite - self.q_value_nm_inv)))
+        nearest_q = float(q_finite[nearest_index])
+        value = float(profile_finite[nearest_index])
+        delta = abs(nearest_q - self.q_value_nm_inv)
+        return nearest_q, value, float(delta)
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        missing = [
+            column
+            for column in (self.q_column, self.profile_column)
+            if column not in X.columns
+        ]
+        if missing:
+            raise KeyError(f"Missing required radial profile columns: {missing}")
+
+        out = X.copy()
+        nearest_q_values = []
+        profile_values = []
+        q_delta_values = []
+        for q_values, radial_values in zip(
+            out[self.q_column],
+            out[self.profile_column],
+            strict=False,
+        ):
+            nearest_q, value, delta = self._nearest_value(q_values, radial_values)
+            nearest_q_values.append(nearest_q)
+            profile_values.append(value)
+            q_delta_values.append(delta)
+
+        values = np.asarray(profile_values, dtype=float)
+        q_deltas = np.asarray(q_delta_values, dtype=float)
+        passed = np.isfinite(values) & self._compare(values)
+        if self.max_q_delta_nm_inv is not None:
+            passed &= np.isfinite(q_deltas) & (q_deltas <= self.max_q_delta_nm_inv)
+
+        out[self.nearest_q_column] = nearest_q_values
+        out[self.value_column] = profile_values
+        out[self.q_delta_column] = q_delta_values
+        out[self.pass_column] = passed
+
+        failed_ids = (
+            out.loc[~out[self.pass_column], "sample_id"].astype(str).tolist()
+            if "sample_id" in out.columns
+            else []
+        )
+        finite_values = values[np.isfinite(values)]
+        self.stats_ = {
+            "filter_type": "radial_profile_value",
+            "q_value_nm_inv": self.q_value_nm_inv,
+            "threshold": self.threshold,
+            "op": self.op,
+            "q_column": self.q_column,
+            "profile_column": self.profile_column,
+            "value_column": self.value_column,
+            "max_q_delta_nm_inv": self.max_q_delta_nm_inv,
+            "rows_in": int(len(out)),
+            "rows_pass": int(np.sum(passed)),
+            "rows_fail": int(len(out) - np.sum(passed)),
+            "min_value_at_q": (
+                float(np.nanmin(finite_values)) if len(finite_values) else np.nan
+            ),
+            "max_value_at_q": (
+                float(np.nanmax(finite_values)) if len(finite_values) else np.nan
+            ),
+            "failed_ids": failed_ids,
+        }
+        if self.drop:
+            out = out.loc[out[self.pass_column]].copy()
             if self.reset_index:
                 out.reset_index(drop=True, inplace=True)
         return out

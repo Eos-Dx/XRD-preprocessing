@@ -11,6 +11,7 @@ sys.path.insert(0, "/Users/sad/dev/container/tests/v0_3")
 
 from xrd_preprocessing import (  # noqa: E402
     H5SessionFilter,
+    calibrant_thickness_h5_filters,
     filter_h5_sessions,
     h5_to_df,
     list_h5_sessions,
@@ -23,6 +24,21 @@ WATER_20MM_REL = (
     / "20260608_112438_Water_20mm"
     / "20260608_112438_Water_20mm_Main.gfrm"
 )
+
+
+def fake_poni(distance_m: float = 0.1) -> str:
+    return f"""# Fake PONI for tests
+poni_version: 2.1
+Detector: Detector
+Detector_config: {{"pixel1": 0.0001, "pixel2": 0.0001, "max_shape": [16, 16], "orientation": 3}}
+Distance: {distance_m}
+Poni1: 0.0008
+Poni2: 0.0008
+Rot1: 0
+Rot2: 0
+Rot3: 0
+Wavelength: 1e-10
+"""
 
 
 def test_h5_to_df_v03_roundtrip(tmp_path):
@@ -205,6 +221,8 @@ def test_h5_to_df_reads_combined_archive_sessions(tmp_path):
         dst.attrs["grouped_by"] = "calibration"
         group = dst.create_group("calib_test")
         group.attrs["calibration_session_uid"] = "calib-uid"
+        group.attrs["calibrant_thickness_mm"] = 10.0
+        group.attrs["calibrant_thickness_source"] = "test"
         src.copy(src["session"], group, name="sample_01_PAT001")
         for key, value in src.attrs.items():
             group["sample_01_PAT001"].attrs[key] = value
@@ -221,9 +239,22 @@ def test_h5_to_df_reads_combined_archive_sessions(tmp_path):
     assert row["archive_group"] == "calib_test"
     assert row["archive_session_name"] == "sample_01_PAT001"
     assert row["calibration_session_uid"] == "calib-uid"
+    assert row["calibrant_thickness_mm"] == 10.0
+    assert row["archive_group_calibrant_thickness_mm"] == 10.0
+    assert row["calibrant_thickness_source"] == "test"
+    assert row["archive_group_calibrant_thickness_source"] == "test"
     assert row["patientId"] == "PAT001"
     assert row["specimenId"] == "PAT001-S01"
     np.testing.assert_array_equal(row["measurement_data"], raw)
+
+
+def test_calibrant_thickness_h5_filters():
+    filters = calibrant_thickness_h5_filters()
+    assert [(item.column, item.op, item.value) for item in filters] == [
+        ("calibrant_thickness_mm", "notna", None),
+        ("calibrant_thickness_mm", ">=", 10.0),
+        ("calibrant_thickness_mm", "<=", 40.0),
+    ]
 
 
 def test_list_and_filter_h5_sessions_from_archive_attrs_only(tmp_path):
@@ -264,6 +295,9 @@ def test_list_and_filter_h5_sessions_from_archive_attrs_only(tmp_path):
                 src.copy(src["session"], group, name=name)
                 for key, value in src.attrs.items():
                     group[name].attrs[key] = value
+                group[name]["sample"].attrs["specimen_status"] = (
+                    "NORMAL" if name == "sample_01_old" else "BENIGN"
+                )
 
     session_df = list_h5_sessions(archive_path)
     selected_df = filter_h5_sessions(
@@ -287,17 +321,145 @@ def test_list_and_filter_h5_sessions_from_archive_attrs_only(tmp_path):
         [H5SessionFilter("started_at", op="date not in", value=["2025-12-31"])],
         session_category="SAMPLE",
     )
+    selected_by_diagnosis_df = filter_h5_sessions(
+        archive_path,
+        [H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"])],
+        session_category="SAMPLE",
+    )
 
     assert len(session_df) == 2
     assert "measurement_data" not in session_df.columns
     assert "raw_data" not in session_df.columns
+    assert "specimen_status" in session_df.columns
     assert selected_df["archive_session_name"].tolist() == ["sample_02_new"]
     assert selected_by_dates_df["archive_session_name"].tolist() == [
         "sample_01_old",
         "sample_02_new",
     ]
     assert rejected_by_dates_df["archive_session_name"].tolist() == ["sample_02_new"]
+    assert selected_by_diagnosis_df["archive_session_name"].tolist() == [
+        "sample_02_new"
+    ]
     assert selected_df["calibration_session_uid"].tolist() == ["calib-uid"]
+
+
+def test_h5_session_filters_can_use_poni_q_range_before_frame_loading(tmp_path):
+    pytest.importorskip("container.v0_3")
+    from _factory_v0_3 import make_measurement, make_session, make_set
+    from container.v0_3 import build_session_container
+
+    raw = np.arange(16, dtype=np.float32).reshape(4, 4)
+    measurement = make_measurement(file_path="sample.gfrm", data=raw)
+    _, _, short_distance_path = build_session_container(
+        make_session(
+            sets=[
+                make_set(
+                    measurements=[measurement],
+                    raw=raw,
+                    poni_text=fake_poni(0.1),
+                )
+            ],
+        ),
+        tmp_path / "short_distance",
+    )
+    _, _, long_distance_path = build_session_container(
+        make_session(
+            sets=[
+                make_set(
+                    measurements=[measurement],
+                    raw=raw,
+                    poni_text=fake_poni(1.0),
+                )
+            ],
+        ),
+        tmp_path / "long_distance",
+    )
+    archive_path = tmp_path / "combined_archive.h5"
+    with h5py.File(archive_path, "w") as dst:
+        dst.attrs["schema_version"] = "0.3"
+        dst.attrs["format"] = "xrd-session-archive"
+        dst.attrs["grouped_by"] = "calibration"
+        group = dst.create_group("calib_test")
+        group.attrs["calibration_session_uid"] = "calib-uid"
+        for name, path in [
+            ("sample_01_short", short_distance_path),
+            ("sample_02_long", long_distance_path),
+        ]:
+            with h5py.File(path, "r") as src:
+                src.copy(src["session"], group, name=name)
+                for key, value in src.attrs.items():
+                    group[name].attrs[key] = value
+
+    session_df = list_h5_sessions(archive_path)
+    selected_df = filter_h5_sessions(
+        archive_path,
+        [H5SessionFilter("poni_q_max_nm_inv", op=">=", value=0.5)],
+        session_category="SAMPLE",
+    )
+
+    assert "measurement_data" not in session_df.columns
+    assert "poni_q_max_nm_inv" in session_df.columns
+    assert "h5_sample_all_sets_have_thickness" in session_df.columns
+    assert session_df["h5_sample_all_sets_have_thickness"].tolist() == [True, True]
+    assert selected_df["archive_session_name"].tolist() == ["sample_01_short"]
+
+
+def test_h5_session_filters_can_require_sample_thickness_before_frame_loading(
+    tmp_path,
+):
+    pytest.importorskip("container.v0_3")
+    from _factory_v0_3 import make_measurement, make_session, make_set
+    from container.v0_3 import build_session_container
+
+    raw = np.arange(16, dtype=np.float32).reshape(4, 4)
+    measurement = make_measurement(file_path="sample.gfrm", data=raw)
+    _, _, missing_thickness_path = build_session_container(
+        make_session(
+            sets=[
+                make_set(
+                    measurements=[measurement],
+                    raw=raw,
+                    sample_thickness_mm=None,
+                )
+            ],
+        ),
+        tmp_path / "missing_thickness",
+    )
+    _, _, valid_thickness_path = build_session_container(
+        make_session(
+            sets=[
+                make_set(
+                    measurements=[measurement],
+                    raw=raw,
+                    sample_thickness_mm=1.2,
+                )
+            ],
+        ),
+        tmp_path / "valid_thickness",
+    )
+    archive_path = tmp_path / "combined_archive.h5"
+    with h5py.File(archive_path, "w") as dst:
+        dst.attrs["schema_version"] = "0.3"
+        dst.attrs["format"] = "xrd-session-archive"
+        dst.attrs["grouped_by"] = "calibration"
+        group = dst.create_group("calib_test")
+        group.attrs["calibration_session_uid"] = "calib-uid"
+        for name, path in [
+            ("sample_01_missing", missing_thickness_path),
+            ("sample_02_valid", valid_thickness_path),
+        ]:
+            with h5py.File(path, "r") as src:
+                src.copy(src["session"], group, name=name)
+                for key, value in src.attrs.items():
+                    group[name].attrs[key] = value
+
+    selected_df = filter_h5_sessions(
+        archive_path,
+        [H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True)],
+        session_category="SAMPLE",
+    )
+
+    assert selected_df["archive_session_name"].tolist() == ["sample_02_valid"]
 
 
 def test_h5_to_df_filters_archive_sessions_before_loading(tmp_path):
@@ -338,12 +500,16 @@ def test_h5_to_df_filters_archive_sessions_before_loading(tmp_path):
                 src.copy(src["session"], group, name=name)
                 for key, value in src.attrs.items():
                     group[name].attrs[key] = value
+                group[name]["sample"].attrs["specimen_status"] = (
+                    "NORMAL" if name == "sample_01_old" else "CANCER"
+                )
 
     _, meas_df = h5_to_df(
         archive_path,
         data_preference="raw",
         h5_filters=[
-            H5SessionFilter("started_at", op="date_in", values=["2026-01-02"])
+            H5SessionFilter("started_at", op="date_in", values=["2026-01-02"]),
+            H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
         ],
         session_category="SAMPLE",
         set_category="SAMPLE",
@@ -351,6 +517,7 @@ def test_h5_to_df_filters_archive_sessions_before_loading(tmp_path):
 
     assert len(meas_df) == 1
     assert meas_df.iloc[0]["started_at"] == "2026-01-02 10:00:00"
+    assert meas_df.iloc[0]["specimen_status"] == "CANCER"
 
 
 def test_h5_to_df_rejects_non_gfrm_data_preference(tmp_path):

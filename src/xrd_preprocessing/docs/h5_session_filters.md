@@ -92,6 +92,7 @@ product_protocol_version
 product_batch_id
 patientId
 specimenId
+specimen_status
 ```
 
 Example H5-level filter when product metadata is present:
@@ -102,6 +103,74 @@ h5_filters = [
     H5SessionFilter("product_selection_status", op="==", value="selected"),
 ]
 ```
+
+Example H5-level diagnosis/status filter:
+
+```python
+h5_filters = [
+    H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
+]
+```
+
+For v0.3 containers, `list_h5_sessions` exposes selected `session/sample`
+metadata, including `specimen_status`, `biopsy`, `side`, `patientId`, and
+`specimenId`, so these filters run before GFRM decode.
+
+## H5-Level PONI Q Coverage
+
+`list_h5_sessions` also inspects SAMPLE set `artifacts/poni` without loading
+detector frames.
+
+It exposes conservative session-level q coverage:
+
+```text
+poni_q_min_nm_inv
+poni_q_max_nm_inv
+poni_q_max_nm_inv_max
+poni_calculated_distance_m
+h5_sample_set_count
+h5_sample_poni_count
+h5_sample_all_sets_have_poni
+h5_sample_thickness_count
+h5_sample_all_sets_have_thickness
+sample_thickness_mm_min
+sample_thickness_mm_max
+```
+
+`poni_q_max_nm_inv` is the minimum q max across SAMPLE sets in the session, so:
+
+```python
+h5_filters = [
+    H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+]
+```
+
+keeps only sessions whose SAMPLE measurements can physically cover the product
+q range before GFRM decode.
+
+Likewise, sample-thickness availability can be checked before `h5_to_df`:
+
+```python
+h5_filters = [
+    H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+]
+```
+
+Keep `drop_missing_sample_thickness=True` in `h5_to_df` as a safety net when
+measurement sets can still be mixed inside a selected session.
+
+Calibrant thickness metadata can also be checked before `h5_to_df`:
+
+```python
+from xrd_preprocessing import calibrant_thickness_h5_filters
+
+h5_filters = [
+    *calibrant_thickness_h5_filters(min_mm=10.0, max_mm=40.0),
+]
+```
+
+This requires `calibrant_thickness_mm` in H5 metadata and rejects values outside
+the current product safety range before GFRM decode.
 
 Example H5-level measurement-day filter when product supplies selected dates:
 
@@ -179,7 +248,8 @@ one row per selected set is written to DataFrame
 DataFrame filters can run
 ```
 
-Measurement-level thickness exclusion can also run inside `h5_to_df`:
+Measurement-level thickness exclusion can also run inside `h5_to_df` as a
+last safety check:
 
 ```python
 h5_to_df(..., drop_missing_sample_thickness=True)

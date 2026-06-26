@@ -226,20 +226,43 @@ def test_azimuthal_integration_can_use_row_reference_thickness_column():
             "interpolation_q_range": [None],
             "azimuthal_range": [None],
             "sample_thickness_mm": [25.0],
-            "agbh_thickness_mm": [15.0],
+            "calibrant_thickness_mm": [15.0],
         }
     )
 
     out = AzimuthalIntegration(
         npt=32,
         calibration_mode="poni",
-        thickness_reference_column="agbh_thickness_mm",
+        thickness_reference_column="calibrant_thickness_mm",
     ).fit_transform(df)
 
     assert out["sample_thickness_mm"].iloc[0] == 25.0
     assert out["thickness_reference_mm"].iloc[0] == 15.0
-    assert out["thickness_reference_source"].iloc[0] == "agbh_thickness_mm"
+    assert out["thickness_reference_source"].iloc[0] == "calibrant_thickness_mm"
     assert out["calculated_distance"].iloc[0] == pytest.approx(0.095)
+
+
+def test_azimuthal_integration_accepts_sample_and_reference_sequences():
+    image = fake_image()
+    df = pd.DataFrame(
+        {
+            "measurement_data": [image, image],
+            "ponifile": [fake_poni(), fake_poni()],
+            "interpolation_q_range": [None, None],
+            "azimuthal_range": [None, None],
+        }
+    )
+
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        sample_thickness_mm=[25.0, 10.0],
+        thickness_reference_mm=[15.0, 40.0],
+    ).fit_transform(df)
+
+    assert out["sample_thickness_mm"].tolist() == [25.0, 10.0]
+    assert out["thickness_reference_mm"].tolist() == [15.0, 40.0]
+    assert out["calculated_distance"].tolist() == pytest.approx([0.095, 0.115])
 
 
 def test_azimuthal_integration_reference_thickness_column_missing_raises():
@@ -257,5 +280,5 @@ def test_azimuthal_integration_reference_thickness_column_missing_raises():
         AzimuthalIntegration(
             npt=32,
             calibration_mode="poni",
-            thickness_reference_column="agbh_thickness_mm",
+            thickness_reference_column="calibrant_thickness_mm",
         ).fit_transform(df)

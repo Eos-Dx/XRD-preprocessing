@@ -7,17 +7,18 @@ The purpose is to transform RAW Bruker GFRM detector frames into normalized
 
 ```text
 H5 container
--> H5SessionFilter(product/user supplied attrs)
--> h5_to_df
+-> H5SessionFilter(product/user supplied attrs: date/status/PONI q coverage)
+-> H5ToDataFrameTransformer
 -> h5_to_df thickness exclusion
--> ColumnValueFilter(optional DataFrame metadata audit)
--> MetadataFilter(optional product/user supplied metadata)
+-> ProductColumnBuilder / ProductStatusGroupFilter(product label policy)
+-> ColumnValueFilter / MetadataFilter(optional audit only)
 -> FaultyPixelDetector
 -> AzimuthalIntegration
 -> SNRTransformer
 -> SNRFilter
 -> PatientSpecimenValidityFilter
 -> QRangeNormalizer
+-> RadialProfileValueFilter(optional product signal gate)
 -> product-specific analysis
 ```
 
@@ -25,6 +26,31 @@ For debugging or validation, insert `RadialProfileSnapshot` after pipeline
 stages. It expands the DataFrame with saved q/profile columns.
 
 Snapshot details are documented in [`snapshots.md`](snapshots.md).
+
+## 0. Transformer Contract
+
+Product routes should be composed from sklearn-style transformers.
+
+```text
+input object -> transformer.fit_transform(input object) -> output object
+```
+
+Use direct functions such as `h5_to_df` only for low-level debugging or backward
+compatibility. Product notebooks and scripts should prefer:
+
+```python
+from xrd_preprocessing import (
+    H5ToDataFrameTransformer,
+    ProductColumnBuilder,
+    ProductStatusGroupFilter,
+    PairedGroupFilter,
+    ConstantQRangeTransformer,
+    DropColumnsTransformer,
+)
+```
+
+The product repository owns YAML/JSON rules. `xrd_preprocessing` owns the
+reusable movement primitives.
 
 ## 1. H5 To DataFrame
 
@@ -72,10 +98,13 @@ embedded raw/data ADU matrices for diagnostics
 Code:
 
 ```python
-calibration_df, measurement_df = h5_to_df(
-    "session.nxs.h5",
+reader = H5ToDataFrameTransformer(
+    data_preference="gfrm",
     raw_root="path/to/gfrm/files",
+    drop_missing_sample_thickness=True,
 )
+measurement_df = reader.fit_transform("session.nxs.h5")
+calibration_df = reader.calibration_df_
 ```
 
 Combined archive with product/user supplied filters:
@@ -114,11 +143,11 @@ effective detector distance controls the real q positions
 without thickness, azimuthal integration maps signal to incorrect q values
 ```
 
-AGBH/reference thickness must also be controlled:
+calibrant/reference thickness must also be controlled:
 
 ```text
-AGBH/reference thickness can differ between calibration sessions
-if present, it should come from H5 metadata as agbh_thickness_mm
+calibrant/reference thickness can differ between calibration sessions
+if present, it should come from H5 metadata as calibrant_thickness_mm
 if absent, add it to the H5/product metadata before product integration
 do not silently reuse one reference thickness across sessions when it differs
 product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
@@ -183,7 +212,8 @@ If selected batches are provided externally, store them in product metadata as
 explicit patient/specimen/batch selection fields. The library must not infer
 product importance from free-text notes.
 
-Use one-column DataFrame filters after `h5_to_df`:
+Use one-column DataFrame filters after `h5_to_df` only as audit guards or when
+the required metadata was not available at H5-filter time:
 
 ```python
 ColumnValueFilter("calibration_quality_status", op="==", value="accepted")
@@ -192,7 +222,59 @@ MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"])
 
 Several metadata filters are composed as several pipeline steps.
 
-## 2a. Optional AgBH Monochromaticity QC
+## 3. H5-Level PONI Q-Range Product Filter
+
+What happens:
+
+```text
+PONI geometry is loaded with pyFAI
+wavelength/energy, detector distance, pixel size, and detector shape define q coverage
+available q_max is estimated before azimuthal integration
+sessions that cannot reach the product q_max are excluded before GFRM decode
+```
+
+Why:
+
+```text
+product features can require signal up to a fixed q value
+longer detector distance can make the requested q range physically unavailable
+integrating outside available geometry gives an invalid product profile
+```
+
+Example for Aramis-style q coverage:
+
+```python
+from xrd_preprocessing import H5SessionFilter, h5_to_df
+
+_, measurement_df = h5_to_df(
+    "combined_archive.h5",
+    data_preference="gfrm",
+    h5_filters=[
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+    ],
+    session_category="SAMPLE",
+    set_category="SAMPLE",
+)
+```
+
+`list_h5_sessions` exposes conservative session-level PONI q coverage:
+
+```text
+poni_q_max_nm_inv = minimum q_max across SAMPLE sets in the session
+```
+
+Output:
+
+```text
+poni_q_min_nm_inv
+poni_q_max_nm_inv
+poni_q_max_nm_inv_max
+poni_calculated_distance_m
+h5_sample_set_count
+h5_sample_poni_count
+```
+
+## 3a. Optional AgBH Monochromaticity QC
 
 Product code can score day/session beam monochromaticity from integrated AgBH
 calibration profiles before selecting product measurements for those days.
@@ -217,7 +299,7 @@ to measurement inclusion. Date fallback exists, but ID-based filtering is
 preferred when product H5 metadata has shared linkage. Details:
 [`agbh_monochromaticity.md`](agbh_monochromaticity.md).
 
-## 3. Faulty Pixel Detector
+## 4. Faulty Pixel Detector
 
 What happens:
 
@@ -260,7 +342,7 @@ faulty_pixel_reason_map
 faulty_pixel_reason_counts
 ```
 
-## 4. Azimuthal Integration
+## 5. Azimuthal Integration
 
 What happens:
 
@@ -289,14 +371,14 @@ AzimuthalIntegration(
 )
 ```
 
-If the H5/product DataFrame contains per-row AGBH/reference thickness:
+If the H5/product DataFrame contains per-row calibrant/reference thickness:
 
 ```python
 AzimuthalIntegration(
     calibration_mode="poni",
     mask_column="pyfai_faulty_pixel_mask",
     error_model="poisson",
-    thickness_reference_column="agbh_thickness_mm",
+    thickness_reference_column="calibrant_thickness_mm",
 )
 ```
 
@@ -312,7 +394,7 @@ pyfai_faulty_pixel_mask
 Optional per-row reference column:
 
 ```text
-agbh_thickness_mm
+calibrant_thickness_mm
 ```
 
 Set q range before integration:
@@ -333,7 +415,7 @@ calculated_distance
 thickness_adjusted_distance_m
 ```
 
-## 5. Poisson SNR
+## 6. Poisson SNR
 
 What happens:
 
@@ -369,7 +451,7 @@ snr_db
 snr_method_used
 ```
 
-## 6. SNR Filter
+## 7. SNR Filter
 
 What happens:
 
@@ -394,7 +476,7 @@ keep finite snr_db >= 20
 drop NaN or snr_db < 20
 ```
 
-## 7. Patient / Specimen Validity Filter
+## 8. Patient / Specimen Validity Filter
 
 What happens:
 
@@ -441,7 +523,7 @@ specimenId
 `h5_to_df` creates these columns from container clinical metadata and raises an
 error if they are missing.
 
-## 8. Q Range Normalization
+## 9. Q Range Normalization
 
 What happens:
 
@@ -467,6 +549,48 @@ radial_profile_data is overwritten by normalized intensity
 
 Use `save_initial_data=True` to keep `radial_profile_data_raw`.
 
+## 10. Radial Profile Value Filter
+
+What happens:
+
+```text
+target q is provided by product/user
+nearest q pixel is found in q_range
+radial_profile_data at that q pixel is compared with threshold
+rows failing the threshold are excluded
+```
+
+Why:
+
+```text
+after normalization, empty/air-like measurements can still survive earlier QC
+some products require non-trivial signal at a known q position
+this is an explicit product signal gate, not a diagnostic claim
+```
+
+Example:
+
+```python
+from xrd_preprocessing import RadialProfileValueFilter
+
+signal_gate = RadialProfileValueFilter(
+    q_value_nm_inv=14.0,
+    threshold=2.0,
+    op=">",
+)
+
+df = signal_gate.fit_transform(df)
+```
+
+Output:
+
+```text
+radial_profile_nearest_q_nm_inv
+radial_profile_value_at_q
+radial_profile_q_delta_nm_inv
+radial_profile_value_pass
+```
+
 ## Saving Stage Profiles
 
 Use this when you need to inspect how `radial_profile_data` changes through the
@@ -476,9 +600,7 @@ pipeline.
 from sklearn.pipeline import Pipeline
 from xrd_preprocessing import (
     AzimuthalIntegration,
-    ColumnValueFilter,
     FaultyPixelDetector,
-    MetadataFilter,
     PatientSpecimenValidityFilter,
     QRangeNormalizer,
     RadialProfileSnapshot,
@@ -490,14 +612,6 @@ save_pipeline_stages = True
 
 pipeline = Pipeline(
     [
-        (
-            "calibration_quality",
-            ColumnValueFilter("calibration_quality_status", op="==", value="accepted"),
-        ),
-        (
-            "diagnosis",
-            MetadataFilter("diagnosis", op="in", values=["BENIGN", "CANCER"]),
-        ),
         ("faulty_pixels", FaultyPixelDetector()),
         (
             "integrate",
@@ -505,7 +619,7 @@ pipeline = Pipeline(
                 calibration_mode="poni",
                 mask_column="pyfai_faulty_pixel_mask",
                 error_model="poisson",
-                thickness_reference_mm=11.0,
+                thickness_reference_column="calibrant_thickness_mm",
             ),
         ),
         (

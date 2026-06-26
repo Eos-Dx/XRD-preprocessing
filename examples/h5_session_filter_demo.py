@@ -20,8 +20,17 @@ def _select_demo_sessions(
     *,
     accepted_count: int,
     review_count: int,
+    required_q_max_nm_inv: float,
 ) -> pd.DataFrame:
-    sessions = filter_h5_sessions(source_archive, session_category="SAMPLE")
+    sessions = filter_h5_sessions(
+        source_archive,
+        [
+            H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
+            H5SessionFilter("poni_q_max_nm_inv", op=">=", value=required_q_max_nm_inv),
+            H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+        ],
+        session_category="SAMPLE",
+    )
     return sessions.head(accepted_count + review_count).copy()
 
 
@@ -31,11 +40,13 @@ def build_tiny_archive(
     *,
     accepted_count: int = 3,
     review_count: int = 2,
+    required_q_max_nm_inv: float = 23.0,
 ) -> pd.DataFrame:
     selected = _select_demo_sessions(
         source_archive,
         accepted_count=accepted_count,
         review_count=review_count,
+        required_q_max_nm_inv=required_q_max_nm_inv,
     )
     output_archive.parent.mkdir(parents=True, exist_ok=True)
 
@@ -69,6 +80,8 @@ def _scalar_preview(df: pd.DataFrame) -> pd.DataFrame:
         "set_name",
         "measurement_data_source",
         "sample_thickness_mm",
+        "poni_q_max_nm_inv",
+        "h5_sample_all_sets_have_thickness",
         "demo_quality_status",
     ]
     return df[[column for column in preview_columns if column in df.columns]].copy()
@@ -86,6 +99,7 @@ def main() -> None:
     )
     parser.add_argument("--accepted-count", type=int, default=3)
     parser.add_argument("--review-count", type=int, default=2)
+    parser.add_argument("--required-q-max", type=float, default=23.0)
     args = parser.parse_args()
 
     if not args.input.exists():
@@ -96,9 +110,15 @@ def main() -> None:
         args.output,
         accepted_count=args.accepted_count,
         review_count=args.review_count,
+        required_q_max_nm_inv=args.required_q_max,
     )
     all_sessions = list_h5_sessions(args.output)
-    h5_filters = [H5SessionFilter("demo_quality_status", op="==", value="accepted")]
+    h5_filters = [
+        H5SessionFilter("demo_quality_status", op="==", value="accepted"),
+        H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=args.required_q_max),
+        H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+    ]
     selected_sessions = filter_h5_sessions(
         args.output,
         h5_filters,
@@ -122,6 +142,7 @@ def main() -> None:
     print(f"tiny_source_sessions={len(selected_for_tiny)}")
     print(f"h5_sessions_before_filter={len(all_sessions)}")
     print(f"h5_sessions_after_filter={len(selected_sessions)}")
+    print(f"required_q_max_nm_inv={args.required_q_max}")
     print(f"measurement_rows_after_h5_to_df={len(measurement_df)}")
     print(f"preview_csv={preview_path}")
 

@@ -92,7 +92,7 @@ integrator = AzimuthalIntegration(
     mask_column="pyfai_faulty_pixel_mask",
     error_model="poisson",
     thickness_adjustment=True,
-    thickness_reference_mm=11.0,
+    thickness_reference_column="calibrant_thickness_mm",
     sample_thickness_column="sample_thickness_mm",
 )
 
@@ -108,7 +108,7 @@ sample_thickness_mm        sample thickness in mm
 interpolation_q_range      optional tuple, for example (2.0, 23.0)
 azimuthal_range            optional azimuth range
 pyfai_faulty_pixel_mask    optional uint8 mask, 1 = exclude
-agbh_thickness_mm          optional AGBH/reference thickness in mm
+calibrant_thickness_mm          optional calibrant/reference thickness in mm
 ```
 
 Output columns:
@@ -227,9 +227,9 @@ product should command drop, flag, or stop before corrected integration
 Reference-thickness contract:
 
 ```text
-AGBH/reference thickness can differ between calibration sessions
-AGBH/reference thickness should be stored in H5 metadata
-preferred standardized DataFrame column: agbh_thickness_mm
+calibrant/reference thickness can differ between calibration sessions
+calibrant/reference thickness should be stored in H5 metadata
+preferred standardized DataFrame column: calibrant_thickness_mm
 AGBH/HBH reliability policy is product-owned metadata
 if the H5 container lacks required values, add them before product preprocessing
 ```
@@ -257,18 +257,32 @@ adjusted_distance_m = 0.100 - 0.5 * (25.0 - 11.0) * 1e-3
 Reference thickness must be supplied either as a constant
 `thickness_reference_mm` or as a row-specific `thickness_reference_column`.
 
-If AGBH/reference thickness is row-specific, use:
+If calibrant/reference thickness is row-specific, use:
 
 ```python
 AzimuthalIntegration(
     calibration_mode="poni",
-    thickness_reference_column="agbh_thickness_mm",
+    thickness_reference_column="calibrant_thickness_mm",
 )
 ```
 
 If `thickness_reference_column` is set, that column must exist and contain a
 finite numeric value for every row. The transformer does not silently fall back
 to a constant reference thickness.
+
+Sequence mode is also supported when the caller has thickness arrays outside
+the DataFrame:
+
+```python
+AzimuthalIntegration(
+    calibration_mode="poni",
+    sample_thickness_mm=[25.0, 10.0],
+    thickness_reference_mm=[40.0, 10.0],
+)
+```
+
+Both sequences must be one-dimensional, finite, numeric, and exactly as long as
+the input DataFrame.
 
 If `sample_thickness_mm`, constant `thickness_reference_mm`, or configured
 `thickness_reference_column` is missing, product azimuthal integration raises
