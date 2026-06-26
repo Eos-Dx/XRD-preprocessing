@@ -2,6 +2,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 
 sys.path.insert(0, "/Users/sad/dev/xrd-analysis/src")
 
@@ -11,13 +12,18 @@ from xrd_preprocessing import (  # noqa: E402
     SNRTransformer,
     perform_azimuthal_integration,
 )
-from xrdanalysis.data_processing.azimuthal_integration import (  # noqa: E402
-    perform_azimuthal_integration as old_perform_azimuthal_integration,
-)
-from xrdanalysis.data_processing.transformers import (  # noqa: E402
-    ColumnNormalizer as OldColumnNormalizer,
-    SNRTransformer as OldSNRTransformer,
-)
+try:
+    from xrdanalysis.data_processing.azimuthal_integration import (  # noqa: E402
+        perform_azimuthal_integration as old_perform_azimuthal_integration,
+    )
+    from xrdanalysis.data_processing.transformers import (  # noqa: E402
+        ColumnNormalizer as OldColumnNormalizer,
+        SNRTransformer as OldSNRTransformer,
+    )
+except ModuleNotFoundError as exc:
+    pytestmark = pytest.mark.skip(
+        reason=f"xrd-analysis parity dependency unavailable: {exc.name}"
+    )
 
 
 def fake_poni() -> str:

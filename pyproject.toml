@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xrd-preprocessing"
-version = "0.1.0"
+version = "0.1.2b0"
 description = "Lightweight XRD preprocessing utilities for EOS products."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -14,6 +14,7 @@ dependencies = [
   "pandas>=2.2",
   "scipy>=1.14",
   "scikit-learn>=1.5",
+  "joblib>=1.4",
   "h5py>=3.12",
   "pyFAI>=2025.1",
   "fabio>=2025.10",
@@ -25,7 +26,6 @@ dependencies = [
 dev = [
   "pytest>=8.3",
   "ruff>=0.8",
-  "pyhank>=2.4",
   "opencv-python-headless>=4.13",
   "scikit-image>=0.26",
 ]
