@@ -19,6 +19,7 @@ from xrd_preprocessing import (
 
 
 def _fake_h5_reader(path, **kwargs):
+    _fake_h5_reader.kwargs = kwargs
     calibration = pd.DataFrame({"cal_id": ["agbh_1"]})
     measurement = pd.DataFrame(
         {
@@ -32,7 +33,10 @@ def _fake_h5_reader(path, **kwargs):
 
 
 def test_h5_to_dataframe_transformer_returns_measurements_and_keeps_calibration():
-    transformer = H5ToDataFrameTransformer(reader=_fake_h5_reader)
+    transformer = H5ToDataFrameTransformer(
+        reader=_fake_h5_reader,
+        measurement_filters=[{"column": "position", "op": "in", "values": ["P1"]}],
+    )
 
     out = transformer.fit_transform("/tmp/synthetic.h5")
 
@@ -40,6 +44,9 @@ def test_h5_to_dataframe_transformer_returns_measurements_and_keeps_calibration(
     assert transformer.calibration_df_["cal_id"].tolist() == ["agbh_1"]
     assert transformer.stats_["measurement_rows"] == 1
     assert transformer.stats_["dropped_missing_sample_thickness"] == 2
+    assert _fake_h5_reader.kwargs["measurement_filters"] == [
+        {"column": "position", "op": "in", "values": ["P1"]}
+    ]
 
 
 def test_product_column_builder_groups_status_at_specimen_level():

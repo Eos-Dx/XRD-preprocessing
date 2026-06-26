@@ -26,6 +26,7 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
         require_clinical_ids: bool = True,
         drop_missing_sample_thickness: bool = False,
         h5_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+        measurement_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
         max_sessions: int | None = None,
         session_category: str | Sequence[str] | set[str] | None = None,
         session_started_at_min: str | pd.Timestamp | None = None,
@@ -38,6 +39,7 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
         self.require_clinical_ids = require_clinical_ids
         self.drop_missing_sample_thickness = drop_missing_sample_thickness
         self.h5_filters = h5_filters
+        self.measurement_filters = measurement_filters
         self.max_sessions = max_sessions
         self.session_category = session_category
         self.session_started_at_min = session_started_at_min
@@ -60,6 +62,7 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
             require_clinical_ids=self.require_clinical_ids,
             drop_missing_sample_thickness=self.drop_missing_sample_thickness,
             h5_filters=self.h5_filters,
+            measurement_filters=self.measurement_filters,
             max_sessions=self.max_sessions,
             session_category=self.session_category,
             session_started_at_min=self.session_started_at_min,

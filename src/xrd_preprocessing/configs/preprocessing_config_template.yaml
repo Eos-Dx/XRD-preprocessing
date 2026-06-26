@@ -29,6 +29,10 @@ metadata:
 
 filters:
   accepted_dates: []
+  measurement_positions:
+    - P1
+    - P2
+    - P3
   required_q_max_nm_inv: 23.0
   require_sample_thickness_mm: true
   require_calibrant_thickness_mm: true

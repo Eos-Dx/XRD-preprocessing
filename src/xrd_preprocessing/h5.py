@@ -261,6 +261,19 @@ def _filter_mask(df: pd.DataFrame, filter_spec: H5SessionFilter) -> pd.Series:
     raise ValueError(f"Unsupported H5 session filter op: {filter_spec.op!r}.")
 
 
+def _row_matches_filters(
+    row: dict[str, Any],
+    filters: Sequence[H5SessionFilter | dict[str, Any]] | None,
+) -> bool:
+    if not filters:
+        return True
+    frame = pd.DataFrame([row])
+    for filter_spec in [_coerce_filter(spec) for spec in filters]:
+        if not bool(_filter_mask(frame, filter_spec).iloc[0]):
+            return False
+    return True
+
+
 def _set_category(set_group: h5py.Group) -> str:
     return str(
         _decode(
@@ -1066,6 +1079,7 @@ def _rows_from_container_reader(
     convert_gfrm: bool,
     session_started_at_min: str | pd.Timestamp | None,
     set_category: str | list[str] | tuple[str, ...] | set[str] | None,
+    measurement_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
     archive_meta: dict[str, Any] | None = None,
     drop_missing_sample_thickness: bool = False,
     drop_stats: dict[str, int] | None = None,
@@ -1108,6 +1122,9 @@ def _rows_from_container_reader(
         if isinstance(acquisition, dict):
             row.update(acquisition)
         _standardize_clinical_ids(row)
+
+        if not _row_matches_filters(row, measurement_filters):
+            continue
 
         category = str(measurement_type_category or row.get("category") or "").upper()
         if (
@@ -1229,6 +1246,7 @@ def h5_to_df(
     session_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
     session_started_at_min: str | pd.Timestamp | None = None,
     set_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    measurement_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Read Eos-Dx container v0.3 into xrd-analysis-style dataframes.
 
@@ -1242,6 +1260,7 @@ def h5_to_df(
     ``data_preference="raw"`` uses the container's embedded ``raw/data`` matrix,
     which the EOSCAN backfill writes from FabIO-decoded GFRM frames.
     ``h5_filters`` filters session attrs before detector frames are loaded.
+    ``measurement_filters`` filters set metadata before detector frames are loaded.
     ``drop_missing_sample_thickness`` excludes measurement sets without positive
     numeric sample thickness before frame loading.
     """
@@ -1274,6 +1293,7 @@ def h5_to_df(
                 convert_gfrm=convert_gfrm,
                 session_started_at_min=session_started_at_min,
                 set_category=set_category,
+                measurement_filters=measurement_filters,
                 drop_missing_sample_thickness=drop_missing_sample_thickness,
                 drop_stats=drop_stats,
             )
@@ -1301,6 +1321,7 @@ def h5_to_df(
                     convert_gfrm=convert_gfrm,
                     session_started_at_min=session_started_at_min,
                     set_category=set_category,
+                    measurement_filters=measurement_filters,
                     drop_missing_sample_thickness=drop_missing_sample_thickness,
                     drop_stats=drop_stats,
                     archive_meta={
