@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import joblib
+import h5py
 import numpy as np
 import pandas as pd
 
@@ -72,6 +75,89 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
             ),
         }
         return measurement_df
+
+
+class H5BlobDataFrameTransformer(TransformerMixin, BaseEstimator):
+    """Read a simple H5 blob layout into a measurement-level DataFrame.
+
+    This supports small test fixtures or preprocessed 2D-array containers where
+    each child group contains attrs plus a raw/processed 2D dataset.
+    """
+
+    def __init__(
+        self,
+        *,
+        source: str = "npy",
+        root_group: str = "measurements",
+        dataset_candidates: Sequence[str] = ("raw/data", "processed/data"),
+    ) -> None:
+        self.source = str(source).lower()
+        self.root_group = root_group
+        self.dataset_candidates = tuple(dataset_candidates)
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: str | Path, y: Any = None):
+        _ = X
+        _ = y
+        return self
+
+    @staticmethod
+    def _decode(value: Any) -> Any:
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        if isinstance(value, np.generic):
+            return value.item()
+        return value
+
+    def _read_dataset(self, group: h5py.Group) -> tuple[np.ndarray, str]:
+        for candidate in self.dataset_candidates:
+            if candidate not in group:
+                continue
+            dataset = group[candidate]
+            data = np.asarray(dataset)
+            if data.dtype.kind in {"u", "i", "f"} and data.ndim == 2:
+                return data.astype(float), f"{self.source}:{candidate}"
+            if self.source == "npy":
+                return np.load(BytesIO(data.tobytes())).astype(float), (
+                    f"{self.source}:{candidate}"
+                )
+            raise ValueError(
+                f"Dataset '{candidate}' for source '{self.source}' is not a "
+                "numeric 2D array."
+            )
+        raise ValueError(f"No H5 dataset found for source={self.source!r}.")
+
+    def transform(self, X: str | Path) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        with h5py.File(X, "r") as h5:
+            root = h5[self.root_group] if self.root_group in h5 else h5
+            for name in sorted(root):
+                group = root[name]
+                if not isinstance(group, h5py.Group):
+                    continue
+                row = {key: self._decode(value) for key, value in group.attrs.items()}
+                row.setdefault("id", name)
+                row.setdefault("meas_name", name)
+                row.setdefault("set_name", name)
+                row["measurement_data"], row["measurement_data_source"] = (
+                    self._read_dataset(group)
+                )
+                rows.append(row)
+        frame = pd.DataFrame(rows)
+        for column in (
+            "sample_thickness_mm",
+            "calibrant_thickness_mm",
+            "poni_q_max_nm_inv",
+        ):
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        self.stats_ = {
+            "filter_type": "h5_blob_to_dataframe",
+            "rows": int(len(frame)),
+            "source": self.source,
+            "root_group": self.root_group,
+        }
+        return frame
 
 
 class ProductColumnBuilder(TransformerMixin, BaseEstimator):
@@ -446,3 +532,110 @@ class RequiredColumnsTransformer(TransformerMixin, BaseEstimator):
             "columns": list(self.columns),
         }
         return out
+
+
+class SimpleRadialProfileTransformer(TransformerMixin, BaseEstimator):
+    """Create simple radial profiles from 2D arrays without PONI geometry.
+
+    This is useful for synthetic pipeline tests. Product data with real geometry
+    should use ``AzimuthalIntegration``.
+    """
+
+    def __init__(
+        self,
+        *,
+        npt: int = 100,
+        q_min: float = 2.0,
+        q_max: float = 23.0,
+        data_column: str = "measurement_data",
+        q_column: str = "q_range",
+        profile_column: str = "radial_profile_data",
+        sigma_column: str = "radial_profile_sigma",
+        thickness_adjustment_applied: bool = True,
+        sample_thickness_column: str = "sample_thickness_mm",
+        thickness_reference_column: str = "calibrant_thickness_mm",
+    ) -> None:
+        self.npt = int(npt)
+        self.q_min = float(q_min)
+        self.q_max = float(q_max)
+        self.data_column = data_column
+        self.q_column = q_column
+        self.profile_column = profile_column
+        self.sigma_column = sigma_column
+        self.thickness_adjustment_applied = bool(thickness_adjustment_applied)
+        self.sample_thickness_column = sample_thickness_column
+        self.thickness_reference_column = thickness_reference_column
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y: Any = None):
+        _ = X
+        _ = y
+        return self
+
+    def _radial_profile(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        yy, xx = np.indices(image.shape)
+        center_y = (image.shape[0] - 1) / 2.0
+        center_x = (image.shape[1] - 1) / 2.0
+        radius = np.sqrt((yy - center_y) ** 2 + (xx - center_x) ** 2)
+        bins = np.linspace(0, float(radius.max()) + 1e-9, self.npt + 1)
+        index = np.clip(np.digitize(radius.ravel(), bins) - 1, 0, self.npt - 1)
+        sums = np.bincount(index, weights=image.ravel(), minlength=self.npt)
+        counts = np.bincount(index, minlength=self.npt)
+        profile = sums / np.maximum(counts, 1)
+        q = np.linspace(self.q_min, self.q_max, self.npt)
+        sigma = np.sqrt(np.maximum(np.abs(profile), 1.0))
+        return q, profile, sigma
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        if self.data_column not in X.columns:
+            raise KeyError(f"Missing data column: {self.data_column}")
+        out = X.copy()
+        q_values = []
+        profile_values = []
+        sigma_values = []
+        for image in out[self.data_column]:
+            q, profile, sigma = self._radial_profile(np.asarray(image, dtype=float))
+            q_values.append(q)
+            profile_values.append(profile)
+            sigma_values.append(sigma)
+        out[self.q_column] = q_values
+        out[self.profile_column] = profile_values
+        out[self.sigma_column] = sigma_values
+        out["thickness_correction_applied"] = self.thickness_adjustment_applied
+        out["thickness_sample_column"] = self.sample_thickness_column
+        out["thickness_reference_column"] = self.thickness_reference_column
+        self.stats_ = {
+            "filter_type": "simple_radial_profile",
+            "rows": int(len(out)),
+            "npt": self.npt,
+            "q_min": self.q_min,
+            "q_max": self.q_max,
+        }
+        return out
+
+
+class JoblibWriterTransformer(TransformerMixin, BaseEstimator):
+    """Write a DataFrame to joblib and return it unchanged."""
+
+    def __init__(self, output_path: str | Path | None = None) -> None:
+        self.output_path = output_path
+        self.output_path_: Path | None = None
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y: Any = None):
+        _ = X
+        _ = y
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        if self.output_path is not None:
+            output_path = Path(self.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump(X, output_path)
+            self.output_path_ = output_path
+        self.stats_ = {
+            "filter_type": "joblib_writer",
+            "rows": int(len(X)),
+            "output_path": str(self.output_path_) if self.output_path_ else None,
+        }
+        return X

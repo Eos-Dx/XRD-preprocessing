@@ -90,6 +90,16 @@ class ColumnValueFilter(TransformerMixin, BaseEstimator):
                 pd.Timestamp(self.upper),
                 inclusive="both",
             )
+        if op in {"date in", "date_in"}:
+            if self.values is None:
+                raise ValueError("values must be provided for op='date in'.")
+            date_values = pd.to_datetime(series, errors="coerce").dt.date.astype(str)
+            allowed_dates = {
+                str(pd.Timestamp(value).date())
+                for value in self.values
+                if not pd.isna(pd.Timestamp(value))
+            }
+            return date_values.isin(allowed_dates)
         if op == "contains":
             return series.fillna("").astype(str).str.contains(str(self.value), regex=True, na=False)
         if op == "isna":

@@ -4,13 +4,17 @@ import pandas as pd
 import pytest
 
 from xrd_preprocessing import (
+    ColumnValueFilter,
     ConstantQRangeTransformer,
     DropColumnsTransformer,
+    H5BlobDataFrameTransformer,
     H5ToDataFrameTransformer,
+    JoblibWriterTransformer,
     PairedGroupFilter,
     ProductColumnBuilder,
     ProductStatusGroupFilter,
     RequiredColumnsTransformer,
+    SimpleRadialProfileTransformer,
 )
 
 
@@ -121,3 +125,41 @@ def test_required_columns_transformer_raises_for_invalid_calibrant_thickness():
 
     with pytest.raises(ValueError, match="Invalid values"):
         RequiredColumnsTransformer({"calibrant_thickness_mm": (10.0, 40.0)}).transform(df)
+
+
+def test_h5_blob_simple_radial_profile_and_joblib_writer(tmp_path):
+    import h5py
+    import joblib
+    import numpy as np
+
+    h5_path = tmp_path / "simple_blob.h5"
+    with h5py.File(h5_path, "w") as h5:
+        group = h5.require_group("measurements/m1")
+        group.attrs["started_at"] = "2026-05-01 10:00:00"
+        group.attrs["patientId"] = "P1"
+        group.attrs["specimenId"] = "P1_LEFT"
+        group.attrs["specimen_status"] = "BENIGN"
+        raw = group.require_group("raw")
+        raw.create_dataset("data", data=np.ones((16, 16), dtype=float))
+
+    reader = H5BlobDataFrameTransformer(
+        source="npy",
+        dataset_candidates=("raw/data",),
+    )
+    radial = SimpleRadialProfileTransformer(npt=12, q_min=2.0, q_max=23.0)
+    writer = JoblibWriterTransformer(tmp_path / "out.joblib")
+
+    df = reader.fit_transform(h5_path)
+    df = ColumnValueFilter(
+        "started_at",
+        op="date in",
+        values=["2026-05-01"],
+    ).fit_transform(df)
+    df = radial.fit_transform(df)
+    out = writer.fit_transform(df)
+    loaded = joblib.load(tmp_path / "out.joblib")
+
+    assert len(out) == 1
+    assert out["measurement_data"].iloc[0].shape == (16, 16)
+    assert len(out["q_range"].iloc[0]) == 12
+    pd.testing.assert_frame_equal(out, loaded)
