@@ -52,6 +52,21 @@ from xrd_preprocessing import (
 The product repository owns YAML/JSON rules. `xrd_preprocessing` owns the
 reusable movement primitives.
 
+The reusable preprocessing YAML template/contract is packaged here:
+
+```text
+src/xrd_preprocessing/configs/preprocessing_config_template.yaml
+```
+
+Product repositories should keep their concrete configs in the product repo,
+then load and validate them with:
+
+```python
+from xrd_preprocessing import load_preprocessing_config
+
+config = load_preprocessing_config("/path/to/product_preprocessing.yaml")
+```
+
 ## 1. H5 To DataFrame
 
 What happens:

@@ -12,6 +12,7 @@ Core scope:
 - reusable metadata and SNR row filters
 - sklearn-style product transformers for H5 reading, product metadata columns,
   paired-group filters, q-range metadata, and payload-column dropping
+- reusable preprocessing YAML template/contract and loader API
 
 Standard product preprocessing order:
 
@@ -50,7 +51,15 @@ Transformer contract:
 v0.1.2-beta product movement should be expressed as transformers
 every DataFrame-changing product step should support fit_transform
 functions remain available for low-level direct use and backward compatibility
-product repositories supply YAML/JSON rules and compose XRD-preprocessing transformers
+XRD-preprocessing owns reusable YAML templates/contracts
+product repositories own concrete YAML/JSON rules and compose XRD-preprocessing transformers
+load_preprocessing_config(...) validates concrete configs against the reusable contract
+```
+
+Bundled preprocessing template:
+
+```text
+src/xrd_preprocessing/configs/preprocessing_config_template.yaml
 ```
 
 Protocol/spectrum boundary:

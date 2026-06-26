@@ -3,6 +3,7 @@ pandas>=2.2
 scipy>=1.14
 scikit-learn>=1.5
 joblib>=1.4
+PyYAML>=6.0
 h5py>=3.12
 pyFAI>=2025.1
 fabio>=2025.10

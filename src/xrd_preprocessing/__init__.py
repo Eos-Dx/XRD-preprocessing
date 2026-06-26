@@ -17,6 +17,13 @@ from .azimuthal import (
     estimate_poni_q_range_nm_inv,
     perform_azimuthal_integration,
 )
+from .config import (
+    DEFAULT_PREPROCESSING_CONFIG,
+    available_preprocessing_configs,
+    load_preprocessing_config,
+    preprocessing_config_path,
+    validate_preprocessing_config,
+)
 from .filters import (
     ColumnValueFilter,
     MetadataFilter,
@@ -98,6 +105,7 @@ __all__ = [
     "CALIBRANT_THICKNESS_MAX_MM",
     "CALIBRANT_THICKNESS_MIN_MM",
     "ConstantQRangeTransformer",
+    "DEFAULT_PREPROCESSING_CONFIG",
     "DropColumnsTransformer",
     "FAULTY_REASON_CODES",
     "FAULTY_REASON_NEGATIVE",
@@ -128,6 +136,7 @@ __all__ = [
     "SpecimenValidityFilter",
     "agbh_alpha_peaks",
     "agbh_kbeta_windows",
+    "available_preprocessing_configs",
     "calculate_snr",
     "calculate_agbh_monochromaticity",
     "count_faulty_pixel_reasons",
@@ -147,13 +156,16 @@ __all__ = [
     "h5_to_df",
     "list_h5_measurement_sets",
     "list_h5_sessions",
+    "load_preprocessing_config",
     "normalize_profile_by_q_range",
     "parse_bruker_header_preview",
     "parse_gfrm_header",
+    "preprocessing_config_path",
     "perform_azimuthal_integration",
     "read_gfrm_adu",
     "read_gfrm_as_photons",
     "read_gfrm_with_fabio",
     "save_gfrm_as_npy",
     "validate_gfrm_array",
+    "validate_preprocessing_config",
 ]
