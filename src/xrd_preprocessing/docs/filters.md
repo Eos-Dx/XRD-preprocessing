@@ -257,8 +257,9 @@ far from the requested q value.
 ## Standard Product Order
 
 ```text
-H5SessionFilter(product/user supplied attrs: date/status/PONI q/thickness)
-h5_to_df
+H5SessionSelectorTransformer(product/user supplied attrs: date/status/PONI q/thickness)
+H5MeasurementSetAuditTransformer(optional metadata-only stage counts)
+H5ToDataFrameTransformer / h5_to_df
 ColumnValueFilter / MetadataFilter(optional audit only)
 PoniQRangeFilter(optional fallback when H5 PONI q filter was unavailable)
 FaultyPixelDetector

@@ -1,3 +1,5 @@
+"""Eos-Dx H5 container metadata selection and DataFrame loading utilities."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

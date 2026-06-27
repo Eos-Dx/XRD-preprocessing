@@ -1,3 +1,5 @@
+"""Bruker GFRM archive extraction and photon-conversion utilities."""
+
 from __future__ import annotations
 
 from pathlib import Path

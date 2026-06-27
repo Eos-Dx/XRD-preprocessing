@@ -81,6 +81,7 @@ def create_faulty_pixel_reason_map(
 
 
 def count_faulty_pixel_reasons(reason_map: np.ndarray) -> dict[str, int]:
+    """Count non-OK faulty-pixel reason codes in one reason map."""
     reason_map = np.asarray(reason_map)
     return {
         name: int(np.sum(reason_map == code))

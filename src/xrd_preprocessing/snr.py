@@ -1,3 +1,5 @@
+"""Signal-to-noise ratio calculations and transformers."""
+
 from __future__ import annotations
 
 from typing import Any

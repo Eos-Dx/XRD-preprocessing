@@ -1,3 +1,5 @@
+"""Azimuthal integration transformers and thickness-corrected pyFAI helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

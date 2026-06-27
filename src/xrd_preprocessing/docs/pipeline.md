@@ -7,7 +7,8 @@ The purpose is to transform RAW Bruker GFRM detector frames into normalized
 
 ```text
 H5 container
--> H5SessionFilter(product/user supplied attrs: date/status/PONI q coverage)
+-> H5SessionSelectorTransformer(product/user supplied attrs: date/status/PONI q/thickness coverage)
+-> H5MeasurementSetAuditTransformer(optional metadata-only stage counts)
 -> H5ToDataFrameTransformer
 -> h5_to_df thickness exclusion
 -> ProductColumnBuilder / ProductStatusGroupFilter(product label policy)
@@ -40,6 +41,8 @@ compatibility. Product notebooks and scripts should prefer:
 
 ```python
 from xrd_preprocessing import (
+    H5MeasurementSetAuditTransformer,
+    H5SessionSelectorTransformer,
     H5ToDataFrameTransformer,
     ProductColumnBuilder,
     ProductStatusGroupFilter,
@@ -51,6 +54,20 @@ from xrd_preprocessing import (
 
 The product repository owns YAML/JSON rules. `xrd_preprocessing` owns the
 reusable movement primitives.
+
+H5 archive movement should use a manifest flow:
+
+```text
+H5 path
+-> H5SessionSelectorTransformer
+-> manifest with archive_path, all_session_df, selected session_df, h5_filters
+-> H5MeasurementSetAuditTransformer(optional audit)
+-> manifest with h5_stage_frames
+-> H5ToDataFrameTransformer
+-> measurement DataFrame
+```
+
+This keeps H5 filtering and stage statistics before detector frame loading.
 
 Reusable preprocessing YAML template/contracts are packaged here:
 
@@ -120,12 +137,36 @@ embedded raw/data ADU matrices for diagnostics
 Code:
 
 ```python
+from xrd_preprocessing import (
+    H5MeasurementSetAuditTransformer,
+    H5SessionFilter,
+    H5SessionSelectorTransformer,
+    H5ToDataFrameTransformer,
+)
+
+selector = H5SessionSelectorTransformer(
+    filters=[
+        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+        H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+    ],
+    session_category="SAMPLE",
+)
+manifest = selector.fit_transform("session.nxs.h5")
+
+audit = H5MeasurementSetAuditTransformer(
+    stage_filters={"after_h5_filters": selector.filters},
+    session_category="SAMPLE",
+    set_category="SAMPLE",
+)
+manifest = audit.fit_transform(manifest)
+
 reader = H5ToDataFrameTransformer(
     data_preference="gfrm",
     raw_root="path/to/gfrm/files",
     drop_missing_sample_thickness=True,
 )
-measurement_df = reader.fit_transform("session.nxs.h5")
+measurement_df = reader.fit_transform(manifest)
 calibration_df = reader.calibration_df_
 ```
 

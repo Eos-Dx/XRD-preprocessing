@@ -1,3 +1,5 @@
+"""Q-range normalization utilities for radial profiles."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

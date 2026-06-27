@@ -57,6 +57,51 @@ calibration_df, measurement_df = h5_to_df(
 )
 ```
 
+## Transformer API
+
+Use transformer objects when building product pipelines or notebooks:
+
+```python
+from xrd_preprocessing import (
+    H5MeasurementSetAuditTransformer,
+    H5SessionFilter,
+    H5SessionSelectorTransformer,
+    H5ToDataFrameTransformer,
+)
+
+selector = H5SessionSelectorTransformer(
+    filters=[
+        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+        H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+    ],
+    session_category="SAMPLE",
+)
+manifest = selector.fit_transform(archive)
+
+audit = H5MeasurementSetAuditTransformer(
+    stage_filters={"after_h5_filters": selector.filters},
+    session_category="SAMPLE",
+    set_category="SAMPLE",
+)
+manifest = audit.fit_transform(manifest)
+
+reader = H5ToDataFrameTransformer(data_preference="gfrm")
+measurement_df = reader.fit_transform(manifest)
+```
+
+The selector output is a manifest:
+
+```text
+archive_path
+all_session_df
+session_df
+h5_filters
+```
+
+The audit transformer adds `h5_stage_frames` for count plots and logs. It does
+not load detector arrays.
+
 ## Product-Owned Protocol Filters
 
 `xrd_preprocessing` does not decide which protocol, batch, patient, specimen, or

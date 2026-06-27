@@ -18,7 +18,8 @@ Standard product preprocessing order:
 
 ```text
 H5 container
--> H5SessionFilter(product/user supplied attrs: date/status/PONI q/thickness availability)
+-> H5SessionSelectorTransformer(product/user supplied attrs: date/status/PONI q/thickness availability)
+-> H5MeasurementSetAuditTransformer(optional metadata-only stage counts)
 -> H5ToDataFrameTransformer(drop_missing_sample_thickness=True)
 -> ProductColumnBuilder / ProductStatusGroupFilter(product label policy)
 -> FaultyPixelDetector
@@ -50,6 +51,9 @@ Transformer contract:
 ```text
 v0.1.2-beta product movement should be expressed as transformers
 every DataFrame-changing product step should support fit_transform
+H5SessionSelectorTransformer returns a manifest with archive_path, all_session_df, selected session_df, and h5_filters
+H5MeasurementSetAuditTransformer adds stage count DataFrames without loading detector arrays
+H5ToDataFrameTransformer can consume that manifest and materialize only selected H5 sessions
 functions remain available for low-level direct use and backward compatibility
 XRD-preprocessing owns reusable YAML templates/contracts
 product repositories own concrete YAML/JSON rules and compose XRD-preprocessing transformers
@@ -60,6 +64,7 @@ Bundled preprocessing template:
 
 ```text
 src/xrd_preprocessing/configs/preprocessing_config_template.yaml
+src/xrd_preprocessing/configs/preprocessing_branch_config_template.yaml
 ```
 
 Protocol/spectrum boundary:

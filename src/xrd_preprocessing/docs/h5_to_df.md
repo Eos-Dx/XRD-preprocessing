@@ -32,7 +32,14 @@ raw_file contains original vendor GFRM bytes
 ## API
 
 ```python
-from xrd_preprocessing import H5SessionFilter, filter_h5_sessions, h5_to_df
+from xrd_preprocessing import (
+    H5MeasurementSetAuditTransformer,
+    H5SessionFilter,
+    H5SessionSelectorTransformer,
+    H5ToDataFrameTransformer,
+    filter_h5_sessions,
+    h5_to_df,
+)
 
 calibration_df, measurement_df = h5_to_df(
     "session.nxs.h5",
@@ -74,6 +81,38 @@ selected_sessions = filter_h5_sessions(
 ```
 
 Details are documented in [`h5_session_filters.md`](h5_session_filters.md).
+
+Transformer manifest API for product pipelines:
+
+```python
+selector = H5SessionSelectorTransformer(
+    filters=[
+        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
+        H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
+    ],
+    session_category="SAMPLE",
+)
+manifest = selector.fit_transform("combined_archive.h5")
+
+audit = H5MeasurementSetAuditTransformer(
+    stage_filters={"after_h5_filters": selector.filters},
+    session_category="SAMPLE",
+    set_category="SAMPLE",
+)
+manifest = audit.fit_transform(manifest)
+
+reader = H5ToDataFrameTransformer(
+    data_preference="gfrm",
+    drop_missing_sample_thickness=True,
+    session_category="SAMPLE",
+    set_category="SAMPLE",
+)
+measurement_df = reader.fit_transform(manifest)
+```
+
+`H5ToDataFrameTransformer` passes the selected manifest `session_df` to
+`h5_to_df`, so detector arrays are loaded only for selected H5 sessions.
 
 Supported container identity:
 
