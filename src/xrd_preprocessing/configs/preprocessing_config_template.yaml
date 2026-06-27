@@ -1,3 +1,7 @@
+# Reusable combined preprocessing contract.
+# Use this template when one YAML contains both one-to-one and one-to-many
+# branch rules. Current Aramis production examples use the branch-specific
+# template instead.
 preprocessing:
   version: 0.1-template
 
@@ -5,6 +9,9 @@ xrd_preprocessing:
   version: local
   release_tag: v0.1.2-beta
 
+# Raw detector source. GFRM is the preferred product source when vendor bytes
+# are available. NPY/TIFF are explicit alternatives for synthetic tests or
+# controlled H5 blobs.
 raw_data:
   source: gfrm
   location: h5_blob
@@ -27,6 +34,9 @@ metadata:
   keep: all
   drop_payload_columns: true
 
+# H5-level filters run before detector arrays are loaded.
+# Accepted dates are product-owned, usually exported from calibration QC.
+# P1/P2/P3 are the canonical measurement positions for current Aramis data.
 filters:
   accepted_dates: []
   measurement_positions:
@@ -57,6 +67,8 @@ labels:
     NORMAL: NORMAL
     NA: exclude
 
+# One-to-many is specimenId-level: one breast can be compared against breast
+# specimens from other patients, with patient-safe splitting downstream.
 one_to_many:
   specimen_status_keep:
     - BENIGN
@@ -65,6 +77,8 @@ one_to_many:
     - PRE_CANCEROUS
   min_measurements_per_specimen_after_snr: 1
 
+# One-to-one is patientId-level: paired breast specimens are required after
+# SNR/profile filtering so symmetry/asymmetry can be modeled.
 one_to_one:
   specimen_status_keep:
     - BENIGN
@@ -83,6 +97,8 @@ one_to_one:
   min_measurements_per_specimen_after_snr: 1
   min_specimens_per_patient_after_snr: 2
 
+# Azimuthal integration settings. `npt=100` is the product default.
+# Thickness correction columns must match filter thickness columns.
 integration:
   npt: 100
   q_range_nm_inv: [2.0, 23.0]
@@ -99,10 +115,12 @@ snr:
   method: poisson
   min_snr_db: 18.0
 
+# Q-range area normalization.
 normalization:
   q_range_nm_inv: [6.7, 7.1]
   save_initial_data: false
 
+# Optional post-normalization profile gate.
 profile_gate:
   q_nm_inv: 14.0
   min_value: 2.0

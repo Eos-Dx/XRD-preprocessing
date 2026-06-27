@@ -64,7 +64,10 @@ Bundled preprocessing template:
 
 ```text
 src/xrd_preprocessing/configs/preprocessing_config_template.yaml
+  commented combined multi-branch YAML template
+
 src/xrd_preprocessing/configs/preprocessing_branch_config_template.yaml
+  commented branch-specific YAML template used by current Aramis configs
 ```
 
 Protocol/spectrum boundary:

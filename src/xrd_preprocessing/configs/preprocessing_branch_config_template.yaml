@@ -1,6 +1,13 @@
+# Reusable branch-specific preprocessing contract.
+# Product repositories copy this template into their own config folder and fill
+# product-specific cohort/date/label rules there. XRD-preprocessing only owns
+# the schema and reusable transformer meaning.
 preprocessing:
   version: 0.1-branch-template
 
+# Branch identity. `decision_unit`, `row_unit`, and `grouping_unit` must be
+# explicit so count tables and filters cannot mix patient/specimen/measurement
+# levels silently.
 aramis_preprocessing:
   name: product_branch_preprocessing
   version: 0.1
@@ -15,6 +22,9 @@ xrd_preprocessing:
   version: local
   release_tag: v0.1.2-beta
 
+# Raw data source contract. Product runs should use GFRM when original vendor
+# bytes are present. NPY/TIFF are allowed only when explicitly declared, for
+# synthetic tests or controlled non-GFRM containers.
 raw_data:
   source: gfrm
   location: h5_blob
@@ -37,6 +47,10 @@ metadata:
   keep: all
   drop_payload_columns: true
 
+# H5-level filters run before detector arrays are loaded.
+# `accepted_dates` is usually filled from product-owned calibration QC JSON.
+# `measurement_positions` keeps only canonical product measurement points.
+# Thickness fields must match `integration.thickness_correction`.
 filters:
   accepted_dates: []
   measurement_positions:
@@ -67,6 +81,9 @@ labels:
     NORMAL: NORMAL
     NA: exclude
 
+# Branch-specific clinical/product validity rules.
+# One-to-one keeps patient pairs; one-to-many usually keeps individual specimen
+# labels. Concrete products should document the exact level in README/docs.
 branch_settings:
   specimen_status_keep:
     - BENIGN
@@ -85,6 +102,9 @@ branch_settings:
   min_measurements_per_specimen_after_snr: 1
   min_specimens_per_patient_after_snr: 2
 
+# Azimuthal integration settings. `npt` defaults to 100 for product notebooks
+# and tests. Thickness correction is mandatory when sample/calibrant thickness
+# metadata are required by the branch.
 integration:
   npt: 100
   q_range_nm_inv: [2.0, 23.0]
@@ -101,10 +121,12 @@ snr:
   method: poisson
   min_snr_db: 18.0
 
+# Normalization window for downstream product profiles.
 normalization:
   q_range_nm_inv: [6.7, 7.1]
   save_initial_data: false
 
+# Optional post-normalization signal gate on the radial profile.
 profile_gate:
   q_nm_inv: 14.0
   min_value: 2.0
