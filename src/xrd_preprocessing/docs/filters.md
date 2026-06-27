@@ -261,7 +261,7 @@ H5SessionSelectorTransformer(product/user supplied attrs: date/status/PONI q/thi
 H5MeasurementSetAuditTransformer(optional metadata-only stage counts)
 H5ToDataFrameTransformer / h5_to_df
 ColumnValueFilter / MetadataFilter(optional audit only)
-PoniQRangeFilter(optional fallback when H5 PONI q filter was unavailable)
+PoniQRangeFilter(optional DataFrame-level check when H5 PONI q filter was unavailable)
 FaultyPixelDetector
 AzimuthalIntegration(error_model="poisson")
 SNRTransformer(snr_method="poisson")

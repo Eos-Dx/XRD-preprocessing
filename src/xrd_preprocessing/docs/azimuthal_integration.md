@@ -10,10 +10,8 @@ on detector image shape such as `512 x 768`.
 For `calibration_mode="poni"`, the PONI text stored in the DataFrame is written
 to a temporary `.poni` file and loaded with `pyFAI.load()`.
 
-If pyFAI does not recognize the detector name but the PONI contains
-`Detector_config`, the loader falls back to pyFAI generic `Detector` while
-preserving `Detector_config`. This is not detector-shape logic. Geometry still
-comes from the PONI fields:
+Product integration has no detector-name fallback. If `pyFAI.load()` cannot load
+the PONI, preprocessing stops. The PONI must provide complete geometry:
 
 ```text
 Detector_config.pixel1

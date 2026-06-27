@@ -20,10 +20,6 @@ Wavelength: 1e-10
 """
 
 
-def fake_custom_detector_poni() -> str:
-    return fake_poni().replace("Detector: Detector", "Detector: Ash512x768")
-
-
 def fake_image() -> np.ndarray:
     y, x = np.indices((16, 16))
     return (np.exp(-((x - 8) ** 2 + (y - 8) ** 2) / 20.0) + 0.1).astype(np.float32)
@@ -81,31 +77,6 @@ def test_azimuthal_integration_transform_fake_poni_image():
     assert out["calculated_distance"].iloc[0] == 0.1
     assert bool(out["thickness_adjustment_applied"].iloc[0]) is True
     assert bool(out["thickness_adjustment_reliable"].iloc[0]) is True
-
-
-def test_azimuthal_integration_unknown_detector_name_uses_detector_config():
-    row = pd.Series(
-        {
-            "measurement_data": fake_image(),
-            "ponifile": fake_custom_detector_poni(),
-            "interpolation_q_range": None,
-            "azimuthal_range": None,
-            "sample_thickness_mm": 11.0,
-        }
-    )
-
-    radial, intensity, sigma, distance = perform_azimuthal_integration(
-        row,
-        npt=32,
-        calibration_mode="poni",
-        thickness_reference_mm=11.0,
-    )
-
-    assert radial.shape == (32,)
-    assert intensity.shape == (32,)
-    assert sigma is None
-    assert distance == 0.1
-    assert np.isfinite(intensity).all()
 
 
 def test_azimuthal_integration_uses_row_mask_column():

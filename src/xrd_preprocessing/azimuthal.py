@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 from dataclasses import dataclass
 from functools import cache
-import re
 from typing import Any
 import warnings
 
@@ -86,24 +84,9 @@ def _integrator_from_poni_text(poni_text: str):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(poni_text)
-        try:
-            return pyFAI.load(path)
-        except RuntimeError as exc:
-            if "unknown" not in str(exc).lower() or "Detector_config:" not in poni_text:
-                raise
-            generic_poni_text = re.sub(
-                r"^Detector:\s*.+$",
-                "Detector: Detector",
-                poni_text,
-                count=1,
-                flags=re.MULTILINE,
-            )
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(generic_poni_text)
-            return pyFAI.load(path)
+        return pyFAI.load(path)
     finally:
-        with suppress(OSError):
-            os.unlink(path)
+        os.unlink(path)
 
 
 def _adjust_poni_distance(
