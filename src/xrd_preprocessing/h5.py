@@ -138,13 +138,17 @@ def _matches_min_timestamp(value: Any, minimum: Any | None) -> bool:
 
 
 def _positive_float(value: Any) -> float | None:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if not np.isfinite(numeric) or float(numeric) <= 0:
+        return None
+    return float(numeric)
+
+
+def _poni_q_range_or_nan(poni_text: str) -> tuple[float, float, float]:
     try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not np.isfinite(numeric) or numeric <= 0:
-        return None
-    return numeric
+        return estimate_poni_q_range_nm_inv(str(poni_text))
+    except Exception:
+        return np.nan, np.nan, np.nan
 
 
 def _coerce_filter(spec: H5SessionFilter | dict[str, Any]) -> H5SessionFilter:
@@ -338,10 +342,7 @@ def _session_sample_set_summary(session: h5py.Group) -> dict[str, Any]:
         if poni_text is None:
             continue
         sample_poni_count += 1
-        try:
-            q_min, q_max, distance_m = estimate_poni_q_range_nm_inv(str(poni_text))
-        except Exception:
-            q_min, q_max, distance_m = np.nan, np.nan, np.nan
+        q_min, q_max, distance_m = _poni_q_range_or_nan(str(poni_text))
         q_min_values.append(q_min)
         q_max_values.append(q_max)
         distance_values.append(distance_m)
@@ -677,12 +678,7 @@ def list_h5_measurement_sets(
                 poni_text = _text_dataset(set_group, "artifacts/poni")
                 if poni_text is not None:
                     row["ponifile"] = poni_text
-                    try:
-                        q_min, q_max, distance_m = estimate_poni_q_range_nm_inv(
-                            str(poni_text)
-                        )
-                    except Exception:
-                        q_min, q_max, distance_m = np.nan, np.nan, np.nan
+                    q_min, q_max, distance_m = _poni_q_range_or_nan(str(poni_text))
                     row["poni_q_min_nm_inv"] = q_min
                     row["poni_q_max_nm_inv"] = q_max
                     row["poni_calculated_distance_m"] = distance_m

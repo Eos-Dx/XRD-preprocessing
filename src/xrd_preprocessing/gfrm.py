@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tarfile
 from typing import Any
 
 import numpy as np
+
+
+_NUMBER_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 
 
 def extract_gfrm_archive(
@@ -61,10 +65,29 @@ def parse_gfrm_header(gfrm_path: str | Path) -> dict[str, str]:
 def _first_number(value: Any, cast: type = int) -> Any:
     if value is None:
         return None
-    try:
-        return cast(str(value).split()[0])
-    except (IndexError, ValueError, TypeError):
+    tokens = str(value).split(maxsplit=1)
+    token = tokens[0] if tokens else ""
+    if not _NUMBER_RE.fullmatch(token):
         return None
+    return cast(token)
+
+
+def _required_float_values(
+    header: dict[str, Any],
+    key: str,
+    *,
+    min_count: int,
+    source: str,
+) -> list[float]:
+    raw = header.get(key)
+    if raw is None:
+        raise ValueError(f"Missing {key} header{source}.")
+    tokens = str(raw).split()
+    if len(tokens) < min_count:
+        raise ValueError(f"{key} must contain at least {min_count} values{source}: {raw}")
+    if not all(_NUMBER_RE.fullmatch(token) for token in tokens):
+        raise ValueError(f"Cannot parse {key} header{source}: {raw!r}")
+    return [float(token) for token in tokens]
 
 
 def parse_bruker_header_preview(gfrm_path: str | Path) -> dict[str, Any]:
@@ -88,27 +111,8 @@ def _parse_eos_photon_metadata(
     gfrm_path: str | Path | None = None,
 ) -> dict[str, Any]:
     source = f" from {gfrm_path!s}" if gfrm_path is not None else ""
-    try:
-        nexp = [float(value) for value in str(header["NEXP"]).split()]
-    except KeyError as exc:
-        raise ValueError(f"Missing NEXP header{source}.") from exc
-    except ValueError as exc:
-        raise ValueError(f"Cannot parse NEXP header{source}: {header.get('NEXP')!r}") from exc
-    if len(nexp) < 3:
-        raise ValueError(f"NEXP must contain at least 3 values{source}: {header['NEXP']}")
-
-    try:
-        ccdparm = [float(value) for value in str(header["CCDPARM"]).split()]
-    except KeyError as exc:
-        raise ValueError(f"Missing CCDPARM header{source}.") from exc
-    except ValueError as exc:
-        raise ValueError(
-            f"Cannot parse CCDPARM header{source}: {header.get('CCDPARM')!r}"
-        ) from exc
-    if len(ccdparm) < 5:
-        raise ValueError(
-            f"CCDPARM must contain 5 values{source}: {header['CCDPARM']}"
-        )
+    nexp = _required_float_values(header, "NEXP", min_count=3, source=source)
+    ccdparm = _required_float_values(header, "CCDPARM", min_count=5, source=source)
 
     readnoise, e_per_adu, e_per_photon, bias, full_scale = ccdparm[:5]
     if e_per_adu <= 0:

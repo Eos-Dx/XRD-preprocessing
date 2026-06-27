@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Iterable
 
@@ -23,6 +22,8 @@ FAULTY_REASON_CODES = {
     FAULTY_REASON_NONFINITE: "nan_or_inf",
     FAULTY_REASON_SATURATED: "saturated_or_hot",
 }
+
+_FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
 
 def _as_2d_image(value, context: str = "image") -> np.ndarray:
@@ -118,15 +119,18 @@ def _beam_center_pixels(poni_text: str) -> tuple[int, int] | None:
     match = re.search(r"^Detector_config:\s*(.+)$", poni_text, re.MULTILINE)
     if poni1 is None or poni2 is None or match is None:
         return None
-    try:
-        config = json.loads(match.group(1).replace("'", '"'))
-        pixel1 = float(config["pixel1"])
-        pixel2 = float(config["pixel2"])
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    pixel1 = _detector_config_float(match.group(1), "pixel1")
+    pixel2 = _detector_config_float(match.group(1), "pixel2")
+    if pixel1 is None or pixel2 is None:
         return None
     if pixel1 <= 0 or pixel2 <= 0:
         return None
     return int(round(poni1 / pixel1)), int(round(poni2 / pixel2))
+
+
+def _detector_config_float(text: str, key: str) -> float | None:
+    match = re.search(rf"['\"]?{key}['\"]?\s*:\s*({_FLOAT_RE})", text)
+    return float(match.group(1)) if match else None
 
 
 def _beam_mask(

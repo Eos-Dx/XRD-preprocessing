@@ -22,6 +22,24 @@ from .h5 import (
 )
 
 
+def _manifest_from_input(X: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(X, Mapping):
+        return dict(X)
+    return {"archive_path": Path(X)}
+
+
+def _archive_path_from_manifest(manifest: Mapping[str, Any]) -> Path:
+    return Path(manifest["archive_path"])
+
+
+def _manifest_value(
+    manifest: Mapping[str, Any],
+    key: str,
+    default: Any,
+) -> Any:
+    return default if default is not None else manifest.get(key)
+
+
 class H5SessionSelectorTransformer(TransformerMixin, BaseEstimator):
     """Select H5 sessions before detector-frame loading."""
 
@@ -47,10 +65,11 @@ class H5SessionSelectorTransformer(TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, X: str | Path | Mapping[str, Any]) -> dict[str, Any]:
-        archive_path = Path(X["archive_path"] if isinstance(X, Mapping) else X)
+        manifest = _manifest_from_input(X)
+        archive_path = _archive_path_from_manifest(manifest)
         all_session_df = (
-            X.get("all_session_df")
-            if isinstance(X, Mapping) and "all_session_df" in X
+            manifest["all_session_df"]
+            if "all_session_df" in manifest
             else list_h5_sessions(archive_path)
         )
         session_df = filter_h5_session_df(
@@ -69,7 +88,6 @@ class H5SessionSelectorTransformer(TransformerMixin, BaseEstimator):
             "sessions_dropped": int(len(all_session_df) - len(session_df)),
             "session_category": self.session_category,
         }
-        manifest = dict(X) if isinstance(X, Mapping) else {"archive_path": archive_path}
         manifest.update(
             {
                 "archive_path": archive_path,
@@ -108,8 +126,8 @@ class H5MeasurementSetAuditTransformer(TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, X: str | Path | Mapping[str, Any]) -> dict[str, Any]:
-        manifest = dict(X) if isinstance(X, Mapping) else {"archive_path": Path(X)}
-        archive_path = Path(manifest["archive_path"])
+        manifest = _manifest_from_input(X)
+        archive_path = _archive_path_from_manifest(manifest)
         session_df = manifest.get("all_session_df")
         frames = list_h5_measurement_stage_sets(
             archive_path,
@@ -178,18 +196,10 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
 
     def transform(self, X: str | Path | Mapping[str, Any]) -> pd.DataFrame:
         archive_path = X
-        h5_session_df = self.h5_session_df
-        h5_filters = self.h5_filters
-        max_sessions = self.max_sessions
+        manifest: Mapping[str, Any] = {}
         if isinstance(X, Mapping):
+            manifest = X
             archive_path = X["archive_path"]
-            h5_session_df = h5_session_df if h5_session_df is not None else X.get("session_df")
-            h5_filters = h5_filters if h5_filters is not None else X.get("h5_filters")
-            max_sessions = (
-                max_sessions
-                if max_sessions is not None
-                else X.get("max_sessions")
-            )
         calibration_df, measurement_df = self.reader(
             archive_path,
             data_preference=self.data_preference,
@@ -197,10 +207,14 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
             convert_gfrm=self.convert_gfrm,
             require_clinical_ids=self.require_clinical_ids,
             drop_missing_sample_thickness=self.drop_missing_sample_thickness,
-            h5_session_df=h5_session_df,
-            h5_filters=h5_filters,
+            h5_session_df=_manifest_value(
+                manifest,
+                "session_df",
+                self.h5_session_df,
+            ),
+            h5_filters=_manifest_value(manifest, "h5_filters", self.h5_filters),
             measurement_filters=self.measurement_filters,
-            max_sessions=max_sessions,
+            max_sessions=_manifest_value(manifest, "max_sessions", self.max_sessions),
             session_category=self.session_category,
             session_started_at_min=self.session_started_at_min,
             set_category=self.set_category,

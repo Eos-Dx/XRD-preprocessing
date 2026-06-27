@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import cache
 import re
@@ -47,13 +48,18 @@ def _pyfai():
         import pyFAI
         from pyFAI.detectors import Detector
 
-        try:
-            from pyFAI.integrator.azimuthal import AzimuthalIntegrator
-        except ImportError:
-            from pyFAI.azimuthalIntegrator import AzimuthalIntegrator
     except Exception as exc:
         raise ImportError("pyFAI is required for azimuthal integration") from exc
+    AzimuthalIntegrator = _azimuthal_integrator_class()
     return pyFAI, Detector, AzimuthalIntegrator
+
+
+def _azimuthal_integrator_class():
+    try:
+        from pyFAI.integrator.azimuthal import AzimuthalIntegrator
+    except ImportError:
+        from pyFAI.azimuthalIntegrator import AzimuthalIntegrator
+    return AzimuthalIntegrator
 
 
 def _integrator_from_dataframe(
@@ -96,10 +102,8 @@ def _integrator_from_poni_text(poni_text: str):
                 handle.write(generic_poni_text)
             return pyFAI.load(path)
     finally:
-        try:
+        with suppress(OSError):
             os.unlink(path)
-        except OSError:
-            pass
 
 
 def _adjust_poni_distance(
@@ -181,11 +185,8 @@ def _resolve_reference_thickness(
         raise ValueError(
             f"Missing required thickness reference column: {thickness_reference_column}"
         )
-    try:
-        row_reference_mm = float(row[thickness_reference_column])
-    except (TypeError, ValueError):
-        row_reference_mm = np.nan
-    if not np.isfinite(row_reference_mm):
+    row_reference_mm = _finite_float(row[thickness_reference_column])
+    if row_reference_mm is None:
         raise ValueError(
             f"Invalid thickness reference value in column: {thickness_reference_column}"
         )
@@ -242,12 +243,8 @@ def _resolve_thickness(
             reference_source=reference_source,
         )
 
-    try:
-        sample_thickness_mm = float(row[sample_thickness_column])
-    except (TypeError, ValueError):
-        sample_thickness_mm = np.nan
-
-    if not np.isfinite(sample_thickness_mm):
+    sample_thickness_mm = _finite_float(row[sample_thickness_column])
+    if sample_thickness_mm is None:
         message = f"Invalid thickness value in column: {sample_thickness_column}"
         if require_thickness_adjustment:
             raise ValueError(message)
@@ -269,6 +266,11 @@ def _resolve_thickness(
         reference_thickness_mm=resolved_reference_mm,
         reference_source=reference_source,
     )
+
+
+def _finite_float(value: Any) -> float | None:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    return float(numeric) if np.isfinite(numeric) else None
 
 
 def _perform_azimuthal_integration_with_metadata(
