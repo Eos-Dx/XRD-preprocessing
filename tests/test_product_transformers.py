@@ -22,12 +22,9 @@ from xrd_preprocessing import (
 
 
 def test_transformer_import_facades_match_public_api():
-    import xrd_preprocessing.product_transformers as old_module
     import xrd_preprocessing.transformers as new_module
 
-    assert old_module.H5ToDataFrameTransformer is H5ToDataFrameTransformer
     assert new_module.H5ToDataFrameTransformer is H5ToDataFrameTransformer
-    assert old_module.ProductStatusGroupFilter is ProductStatusGroupFilter
     assert new_module.ProductStatusGroupFilter is ProductStatusGroupFilter
 
 

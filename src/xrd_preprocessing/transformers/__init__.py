@@ -1,9 +1,4 @@
-"""Product preprocessing transformers.
-
-Import from this package for new code. The historical
-``xrd_preprocessing.product_transformers`` module remains as a compatibility
-facade.
-"""
+"""Product preprocessing transformers."""
 
 from .h5 import (
     H5BlobDataFrameTransformer,

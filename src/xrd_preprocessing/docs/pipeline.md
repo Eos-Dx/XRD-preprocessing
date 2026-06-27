@@ -64,9 +64,6 @@ xrd_preprocessing.transformers.labels    status-group and paired-patient movemen
 xrd_preprocessing.transformers.profiles  synthetic profile movement for tests
 ```
 
-`xrd_preprocessing.product_transformers` is kept only as a compatibility
-facade for older imports.
-
 H5 archive movement should use a manifest flow:
 
 ```text
