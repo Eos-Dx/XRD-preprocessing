@@ -55,6 +55,18 @@ from xrd_preprocessing import (
 The product repository owns YAML/JSON rules. `xrd_preprocessing` owns the
 reusable movement primitives.
 
+Implementation modules are split by responsibility:
+
+```text
+xrd_preprocessing.transformers.h5        H5 selection/audit/reader movement
+xrd_preprocessing.transformers.metadata  product metadata and output movement
+xrd_preprocessing.transformers.labels    status-group and paired-patient movement
+xrd_preprocessing.transformers.profiles  synthetic profile movement for tests
+```
+
+`xrd_preprocessing.product_transformers` is kept only as a compatibility
+facade for older imports.
+
 H5 archive movement should use a manifest flow:
 
 ```text

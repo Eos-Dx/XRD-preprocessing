@@ -65,7 +65,7 @@ from .faulty_pixels import (
     detect_hot_pixels,
 )
 from .normalization import QRangeNormalizer, normalize_profile_by_q_range
-from .product_transformers import (
+from .transformers import (
     ConstantQRangeTransformer,
     DropColumnsTransformer,
     H5BlobDataFrameTransformer,

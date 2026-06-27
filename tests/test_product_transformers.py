@@ -21,6 +21,16 @@ from xrd_preprocessing import (
 )
 
 
+def test_transformer_import_facades_match_public_api():
+    import xrd_preprocessing.product_transformers as old_module
+    import xrd_preprocessing.transformers as new_module
+
+    assert old_module.H5ToDataFrameTransformer is H5ToDataFrameTransformer
+    assert new_module.H5ToDataFrameTransformer is H5ToDataFrameTransformer
+    assert old_module.ProductStatusGroupFilter is ProductStatusGroupFilter
+    assert new_module.ProductStatusGroupFilter is ProductStatusGroupFilter
+
+
 def _fake_h5_reader(path, **kwargs):
     _fake_h5_reader.kwargs = kwargs
     calibration = pd.DataFrame({"cal_id": ["agbh_1"]})
@@ -53,7 +63,7 @@ def test_h5_to_dataframe_transformer_returns_measurements_and_keeps_calibration(
 
 
 def test_h5_selector_audit_and_reader_transformer_chain(monkeypatch):
-    import xrd_preprocessing.product_transformers as product_transformers
+    import xrd_preprocessing.transformers.h5 as h5_transformers
 
     session_rows = pd.DataFrame(
         {
@@ -69,12 +79,12 @@ def test_h5_selector_audit_and_reader_transformer_chain(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        product_transformers,
+        h5_transformers,
         "list_h5_sessions",
         lambda _path: session_rows,
     )
     monkeypatch.setattr(
-        product_transformers,
+        h5_transformers,
         "list_h5_measurement_stage_sets",
         lambda _path, **_kwargs: {
             "before": measurement_rows,
@@ -195,7 +205,9 @@ def test_required_columns_transformer_raises_for_invalid_calibrant_thickness():
     df = pd.DataFrame({"calibrant_thickness_mm": [41.0]})
 
     with pytest.raises(ValueError, match="Invalid values"):
-        RequiredColumnsTransformer({"calibrant_thickness_mm": (10.0, 40.0)}).transform(df)
+        RequiredColumnsTransformer({"calibrant_thickness_mm": (10.0, 40.0)}).transform(
+            df
+        )
 
 
 def test_h5_blob_simple_radial_profile_and_joblib_writer(tmp_path):

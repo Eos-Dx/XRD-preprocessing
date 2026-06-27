@@ -60,6 +60,16 @@ product repositories own concrete YAML/JSON rules and compose XRD-preprocessing 
 load_preprocessing_config(...) validates concrete configs against the reusable contract
 ```
 
+Transformer module layout:
+
+```text
+xrd_preprocessing.transformers.h5        H5 selection/audit/reader transformers
+xrd_preprocessing.transformers.metadata  product columns, q-range, required columns, joblib output
+xrd_preprocessing.transformers.labels    product status-group and paired-patient filters
+xrd_preprocessing.transformers.profiles  lightweight synthetic radial-profile transformer
+xrd_preprocessing.product_transformers   backward-compatible import facade
+```
+
 Bundled preprocessing template:
 
 ```text
