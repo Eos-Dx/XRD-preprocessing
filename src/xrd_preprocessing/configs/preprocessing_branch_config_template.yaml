@@ -1,0 +1,110 @@
+preprocessing:
+  version: 0.1-branch-template
+
+aramis_preprocessing:
+  name: product_branch_preprocessing
+  version: 0.1
+  product: Aramis
+  clinical_stage: research draft
+  branch: one_to_one
+  decision_unit: patientId
+  row_unit: measurementId
+  grouping_unit: specimenId
+
+xrd_preprocessing:
+  version: local
+  release_tag: v0.1.2-beta
+
+raw_data:
+  source: gfrm
+  location: h5_blob
+  allowed_sources:
+    - gfrm
+    - npy
+    - tiff
+  h5_dataset_candidates:
+    gfrm:
+      - raw_file
+      - artifacts/gfrm
+    npy:
+      - raw/data
+      - processed/data
+    tiff:
+      - raw/tiff
+      - raw_file
+
+metadata:
+  keep: all
+  drop_payload_columns: true
+
+filters:
+  accepted_dates: []
+  measurement_positions:
+    - P1
+    - P2
+    - P3
+  required_q_max_nm_inv: 23.0
+  require_sample_thickness_mm: true
+  require_calibrant_thickness_mm: true
+  calibrant_thickness_range_mm: [10.0, 40.0]
+  thickness:
+    sample:
+      column: sample_thickness_mm
+      require: true
+      min_mm: 0.0
+    calibrant:
+      column: calibrant_thickness_mm
+      require: true
+      min_mm: 10.0
+      max_mm: 40.0
+
+labels:
+  grouping:
+    BENIGN: BENIGN
+    CANCER: CANCER
+    ATYPICAL: CANCER
+    PRE_CANCEROUS: CANCER
+    NORMAL: NORMAL
+    NA: exclude
+
+branch_settings:
+  specimen_status_keep:
+    - BENIGN
+    - CANCER
+    - NORMAL
+    - ATYPICAL
+    - PRE_CANCEROUS
+  patient_pair_keep:
+    - [BENIGN, CANCER]
+    - [BENIGN, NORMAL]
+    - [CANCER, NORMAL]
+  patient_pair_exclude:
+    - [BENIGN, BENIGN]
+    - [NORMAL, NORMAL]
+    - [CANCER, CANCER]
+  min_measurements_per_specimen_after_snr: 1
+  min_specimens_per_patient_after_snr: 2
+
+integration:
+  npt: 100
+  q_range_nm_inv: [2.0, 23.0]
+  error_model: poisson
+  thickness_correction:
+    enabled: true
+    sample_thickness_column: sample_thickness_mm
+    calibrant_thickness_column: calibrant_thickness_mm
+    require_sample_thickness: true
+    require_calibrant_thickness: true
+    calibrant_thickness_range_mm: [10.0, 40.0]
+
+snr:
+  method: poisson
+  min_snr_db: 18.0
+
+normalization:
+  q_range_nm_inv: [6.7, 7.1]
+  save_initial_data: false
+
+profile_gate:
+  q_nm_inv: 14.0
+  min_value: 2.0

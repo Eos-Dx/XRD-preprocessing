@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from pathlib import Path
 import tempfile
@@ -447,6 +448,23 @@ def _session_metadata_row(
 def list_h5_sessions(file_path: str | Path) -> pd.DataFrame:
     """List H5 session attrs without reading detector frames."""
     file_path = Path(file_path)
+    stat = file_path.stat()
+    return _list_h5_sessions_cached(
+        str(file_path),
+        stat.st_mtime_ns,
+        stat.st_size,
+    ).copy(deep=True)
+
+
+@lru_cache(maxsize=4)
+def _list_h5_sessions_cached(
+    file_path: str,
+    mtime_ns: int,
+    size_bytes: int,
+) -> pd.DataFrame:
+    _ = mtime_ns
+    _ = size_bytes
+    file_path = Path(file_path)
     rows: list[dict[str, Any]] = []
     with h5py.File(file_path, "r") as h5:
         container_attrs = _attrs(h5)
@@ -499,6 +517,25 @@ def filter_h5_sessions(
 ) -> pd.DataFrame:
     """Filter H5 session attrs before frame loading and DataFrame creation."""
     session_df = list_h5_sessions(file_path)
+    return filter_h5_session_df(
+        session_df,
+        filters=filters,
+        session_category=session_category,
+        session_started_at_min=session_started_at_min,
+        max_sessions=max_sessions,
+    )
+
+
+def filter_h5_session_df(
+    session_df: pd.DataFrame,
+    filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+    *,
+    session_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    session_started_at_min: str | pd.Timestamp | None = None,
+    max_sessions: int | None = None,
+) -> pd.DataFrame:
+    """Filter an already loaded H5 session metadata table."""
+    session_df = session_df.copy()
     filter_specs = [_coerce_filter(spec) for spec in filters or []]
 
     if session_category is not None:
@@ -527,6 +564,42 @@ def filter_h5_sessions(
     if max_sessions is not None:
         session_df = session_df.head(max_sessions).copy()
     return session_df.reset_index(drop=True)
+
+
+def list_h5_measurement_stage_sets(
+    file_path: str | Path,
+    *,
+    stage_filters: dict[str, Sequence[H5SessionFilter | dict[str, Any]]],
+    session_df: pd.DataFrame | None = None,
+    session_category: str | list[str] | tuple[str, ...] | set[str] | None = "SAMPLE",
+    set_category: str | list[str] | tuple[str, ...] | set[str] | None = "SAMPLE",
+    max_sessions_by_stage: dict[str, int | None] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """List measurement-set metadata once, then split it into filter stages."""
+    if session_df is None:
+        session_df = list_h5_sessions(file_path)
+    base_sessions = filter_h5_session_df(session_df, session_category=session_category)
+    all_sets = list_h5_measurement_sets(
+        file_path,
+        session_df=base_sessions,
+        set_category=set_category,
+    )
+    max_sessions_by_stage = max_sessions_by_stage or {}
+    frames: dict[str, pd.DataFrame] = {}
+    for stage_name, filters in stage_filters.items():
+        stage_sessions = filter_h5_session_df(
+            base_sessions,
+            filters=filters,
+            max_sessions=max_sessions_by_stage.get(stage_name),
+        )
+        if "session_path" not in stage_sessions.columns or "session_path" not in all_sets:
+            frames[stage_name] = all_sets.iloc[0:0].copy()
+            continue
+        paths = set(stage_sessions["session_path"].astype(str))
+        frames[stage_name] = all_sets.loc[
+            all_sets["session_path"].astype(str).isin(paths)
+        ].copy()
+    return frames
 
 
 def list_h5_measurement_sets(
@@ -924,10 +997,19 @@ def _archive_sessions(
     file_path: Path,
     *,
     h5_filters: Sequence[H5SessionFilter | dict[str, Any]] | None,
+    h5_session_df: pd.DataFrame | None,
     session_category: str | list[str] | tuple[str, ...] | set[str] | None,
     session_started_at_min: str | pd.Timestamp | None,
     max_sessions: int | None,
 ) -> list[dict[str, Any]]:
+    if h5_session_df is not None:
+        return filter_h5_session_df(
+            h5_session_df,
+            h5_filters,
+            session_category=session_category,
+            session_started_at_min=session_started_at_min,
+            max_sessions=max_sessions,
+        ).to_dict("records")
     return filter_h5_sessions(
         file_path,
         h5_filters,
@@ -1241,6 +1323,7 @@ def h5_to_df(
     convert_gfrm: bool = True,
     require_clinical_ids: bool = True,
     drop_missing_sample_thickness: bool = False,
+    h5_session_df: pd.DataFrame | None = None,
     h5_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
     max_sessions: int | None = None,
     session_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
@@ -1260,6 +1343,7 @@ def h5_to_df(
     ``data_preference="raw"`` uses the container's embedded ``raw/data`` matrix,
     which the EOSCAN backfill writes from FabIO-decoded GFRM frames.
     ``h5_filters`` filters session attrs before detector frames are loaded.
+    ``h5_session_df`` can provide an already selected session manifest.
     ``measurement_filters`` filters set metadata before detector frames are loaded.
     ``drop_missing_sample_thickness`` excludes measurement sets without positive
     numeric sample thickness before frame loading.
@@ -1278,13 +1362,22 @@ def h5_to_df(
             )
 
     if fmt == "xrd-session":
-        sessions = filter_h5_sessions(
-            file_path,
-            h5_filters,
-            session_category=session_category,
-            session_started_at_min=session_started_at_min,
-            max_sessions=max_sessions,
-        )
+        if h5_session_df is None:
+            sessions = filter_h5_sessions(
+                file_path,
+                h5_filters,
+                session_category=session_category,
+                session_started_at_min=session_started_at_min,
+                max_sessions=max_sessions,
+            )
+        else:
+            sessions = filter_h5_session_df(
+                h5_session_df,
+                h5_filters,
+                session_category=session_category,
+                session_started_at_min=session_started_at_min,
+                max_sessions=max_sessions,
+            )
         if not sessions.empty:
             calibration_rows, measurement_rows = _rows_from_container_reader(
                 file_path,
@@ -1301,6 +1394,7 @@ def h5_to_df(
         sessions = _archive_sessions(
             file_path,
             h5_filters=h5_filters,
+            h5_session_df=h5_session_df,
             session_category=session_category,
             session_started_at_min=session_started_at_min,
             max_sessions=max_sessions,

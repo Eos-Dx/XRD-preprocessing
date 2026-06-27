@@ -52,11 +52,18 @@ from xrd_preprocessing import (
 The product repository owns YAML/JSON rules. `xrd_preprocessing` owns the
 reusable movement primitives.
 
-The reusable preprocessing YAML template/contract is packaged here:
+Reusable preprocessing YAML template/contracts are packaged here:
 
 ```text
 src/xrd_preprocessing/configs/preprocessing_config_template.yaml
+src/xrd_preprocessing/configs/preprocessing_branch_config_template.yaml
 ```
+
+Use `preprocessing_config_template.yaml` for a combined product contract that
+keeps multiple branches in one file. Use
+`preprocessing_branch_config_template.yaml` for the current Aramis style: one
+concrete YAML per product branch with branch-specific rules under
+`branch_settings`.
 
 Product repositories should keep their concrete configs in the product repo,
 then load and validate them with:

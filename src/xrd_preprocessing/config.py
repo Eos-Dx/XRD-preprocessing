@@ -15,13 +15,13 @@ REQUIRED_PREPROCESSING_CONFIG_SECTIONS = (
     "metadata",
     "filters",
     "labels",
-    "one_to_many",
-    "one_to_one",
     "integration",
     "snr",
     "normalization",
     "profile_gate",
 )
+REQUIRED_COMBINED_BRANCH_SECTIONS = ("one_to_many", "one_to_one")
+REQUIRED_BRANCH_SPECIFIC_SECTIONS = ("branch_settings",)
 
 
 def available_preprocessing_configs() -> list[str]:
@@ -67,6 +67,21 @@ def validate_preprocessing_config(config: dict[str, Any]) -> None:
     ]
     if missing:
         raise ValueError(f"Missing preprocessing config sections: {missing}")
+    has_combined_branches = all(
+        section in config for section in REQUIRED_COMBINED_BRANCH_SECTIONS
+    )
+    has_branch_specific = all(
+        section in config for section in REQUIRED_BRANCH_SPECIFIC_SECTIONS
+    )
+    if not has_combined_branches and not has_branch_specific:
+        raise ValueError(
+            "Missing preprocessing branch contract: provide one_to_one/one_to_many "
+            "or branch_settings."
+        )
+    if has_branch_specific:
+        branch = config.get("aramis_preprocessing", {}).get("branch")
+        if branch is not None and branch not in {"one_to_one", "one_to_many"}:
+            raise ValueError(f"Unknown branch-specific preprocessing branch: {branch}")
     source = str(config["raw_data"].get("source", "")).lower()
     allowed = {str(item).lower() for item in config["raw_data"].get("allowed_sources", [])}
     if allowed and source not in allowed:

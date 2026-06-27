@@ -11,7 +11,126 @@ import numpy as np
 import pandas as pd
 
 from ._compat import BaseEstimator, TransformerMixin
-from .h5 import H5SessionFilter, h5_to_df
+from .h5 import (
+    H5SessionFilter,
+    filter_h5_session_df,
+    h5_to_df,
+    list_h5_measurement_stage_sets,
+    list_h5_sessions,
+)
+
+
+class H5SessionSelectorTransformer(TransformerMixin, BaseEstimator):
+    """Select H5 sessions before detector-frame loading."""
+
+    def __init__(
+        self,
+        *,
+        filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+        session_category: str | Sequence[str] | set[str] | None = "SAMPLE",
+        session_started_at_min: str | pd.Timestamp | None = None,
+        max_sessions: int | None = None,
+    ) -> None:
+        self.filters = filters
+        self.session_category = session_category
+        self.session_started_at_min = session_started_at_min
+        self.max_sessions = max_sessions
+        self.all_session_df_: pd.DataFrame | None = None
+        self.session_df_: pd.DataFrame | None = None
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: str | Path, y: Any = None):
+        _ = X
+        _ = y
+        return self
+
+    def transform(self, X: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+        archive_path = Path(X["archive_path"] if isinstance(X, Mapping) else X)
+        all_session_df = (
+            X.get("all_session_df")
+            if isinstance(X, Mapping) and "all_session_df" in X
+            else list_h5_sessions(archive_path)
+        )
+        session_df = filter_h5_session_df(
+            all_session_df,
+            self.filters,
+            session_category=self.session_category,
+            session_started_at_min=self.session_started_at_min,
+            max_sessions=self.max_sessions,
+        )
+        self.all_session_df_ = all_session_df
+        self.session_df_ = session_df
+        self.stats_ = {
+            "filter_type": "h5_session_selector",
+            "sessions_in": int(len(all_session_df)),
+            "sessions_pass": int(len(session_df)),
+            "sessions_dropped": int(len(all_session_df) - len(session_df)),
+            "session_category": self.session_category,
+        }
+        manifest = dict(X) if isinstance(X, Mapping) else {"archive_path": archive_path}
+        manifest.update(
+            {
+                "archive_path": archive_path,
+                "all_session_df": all_session_df,
+                "session_df": session_df,
+                "h5_filters": self.filters,
+                "h5_session_selector_stats": self.stats_,
+            }
+        )
+        return manifest
+
+
+class H5MeasurementSetAuditTransformer(TransformerMixin, BaseEstimator):
+    """Build H5 measurement-set audit stages without detector-frame loading."""
+
+    def __init__(
+        self,
+        *,
+        stage_filters: Mapping[str, Sequence[H5SessionFilter | dict[str, Any]]],
+        session_category: str | Sequence[str] | set[str] | None = "SAMPLE",
+        set_category: str | Sequence[str] | set[str] | None = "SAMPLE",
+        max_sessions_by_stage: Mapping[str, int | None] | None = None,
+    ) -> None:
+        self.stage_filters = dict(stage_filters)
+        self.session_category = session_category
+        self.set_category = set_category
+        self.max_sessions_by_stage = (
+            dict(max_sessions_by_stage) if max_sessions_by_stage is not None else None
+        )
+        self.stage_frames_: dict[str, pd.DataFrame] | None = None
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: str | Path | Mapping[str, Any], y: Any = None):
+        _ = X
+        _ = y
+        return self
+
+    def transform(self, X: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+        manifest = dict(X) if isinstance(X, Mapping) else {"archive_path": Path(X)}
+        archive_path = Path(manifest["archive_path"])
+        session_df = manifest.get("all_session_df")
+        frames = list_h5_measurement_stage_sets(
+            archive_path,
+            session_df=session_df,
+            stage_filters=self.stage_filters,
+            session_category=self.session_category,
+            set_category=self.set_category,
+            max_sessions_by_stage=self.max_sessions_by_stage,
+        )
+        self.stage_frames_ = frames
+        self.stats_ = {
+            "filter_type": "h5_measurement_set_audit",
+            "stages": {
+                stage_name: int(len(frame)) for stage_name, frame in frames.items()
+            },
+        }
+        manifest.update(
+            {
+                "h5_stage_frames": frames,
+                "h5_measurement_set_audit_stats": self.stats_,
+            }
+        )
+        return manifest
 
 
 class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
@@ -25,6 +144,7 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
         convert_gfrm: bool = True,
         require_clinical_ids: bool = True,
         drop_missing_sample_thickness: bool = False,
+        h5_session_df: pd.DataFrame | None = None,
         h5_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
         measurement_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
         max_sessions: int | None = None,
@@ -38,6 +158,7 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
         self.convert_gfrm = convert_gfrm
         self.require_clinical_ids = require_clinical_ids
         self.drop_missing_sample_thickness = drop_missing_sample_thickness
+        self.h5_session_df = h5_session_df
         self.h5_filters = h5_filters
         self.measurement_filters = measurement_filters
         self.max_sessions = max_sessions
@@ -48,22 +169,36 @@ class H5ToDataFrameTransformer(TransformerMixin, BaseEstimator):
         self.calibration_df_: pd.DataFrame | None = None
         self.stats_: dict[str, Any] | None = None
 
-    def fit(self, X: str | Path, y: Any = None):
+    def fit(self, X: str | Path | Mapping[str, Any], y: Any = None):
         _ = X
         _ = y
         return self
 
-    def transform(self, X: str | Path) -> pd.DataFrame:
+    def transform(self, X: str | Path | Mapping[str, Any]) -> pd.DataFrame:
+        archive_path = X
+        h5_session_df = self.h5_session_df
+        h5_filters = self.h5_filters
+        max_sessions = self.max_sessions
+        if isinstance(X, Mapping):
+            archive_path = X["archive_path"]
+            h5_session_df = h5_session_df if h5_session_df is not None else X.get("session_df")
+            h5_filters = h5_filters if h5_filters is not None else X.get("h5_filters")
+            max_sessions = (
+                max_sessions
+                if max_sessions is not None
+                else X.get("max_sessions")
+            )
         calibration_df, measurement_df = self.reader(
-            X,
+            archive_path,
             data_preference=self.data_preference,
             raw_root=self.raw_root,
             convert_gfrm=self.convert_gfrm,
             require_clinical_ids=self.require_clinical_ids,
             drop_missing_sample_thickness=self.drop_missing_sample_thickness,
-            h5_filters=self.h5_filters,
+            h5_session_df=h5_session_df,
+            h5_filters=h5_filters,
             measurement_filters=self.measurement_filters,
-            max_sessions=self.max_sessions,
+            max_sessions=max_sessions,
             session_category=self.session_category,
             session_started_at_min=self.session_started_at_min,
             set_category=self.set_category,
@@ -313,20 +448,27 @@ class ProductStatusGroupFilter(TransformerMixin, BaseEstimator):
         filtered = out.loc[mask].copy()
         if self.reset_index:
             filtered.reset_index(drop=True, inplace=True)
+        counts_pass = (
+            filtered[self.group_column]
+            .fillna("")
+            .astype(str)
+            .str.upper()
+            .value_counts(dropna=False)
+            .to_dict()
+        )
+        rows_fail = int(len(out) - mask.sum())
         self.stats_ = {
             "filter_type": "product_status_group",
             "group_column": self.group_column,
             "allowed": sorted(allowed),
             "rows_in": int(len(out)),
             "rows_pass": int(mask.sum()),
-            "rows_fail": int(len(out) - mask.sum()),
+            "rows_fail": rows_fail,
+            "rows_dropped": rows_fail,
             "counts_in": groups.value_counts(dropna=False).to_dict(),
-            "counts_pass": filtered[self.group_column]
-            .fillna("")
-            .astype(str)
-            .str.upper()
-            .value_counts(dropna=False)
-            .to_dict(),
+            "counts_pass": counts_pass,
+            "before_counts": groups.value_counts(dropna=False).to_dict(),
+            "after_counts": counts_pass,
         }
         return filtered
 
@@ -403,6 +545,8 @@ class PairedGroupFilter(TransformerMixin, BaseEstimator):
             "__".join(groups) if groups else "NA": int(count)
             for groups, count in pd.Series(patient_pairs).value_counts().items()
         }
+        after_pair_counts = filtered[self.output_column].value_counts(dropna=False).to_dict()
+        rows_fail = int(len(out) - len(filtered))
         self.stats_ = {
             "filter_type": "paired_group",
             "patient_column": self.patient_column,
@@ -411,7 +555,8 @@ class PairedGroupFilter(TransformerMixin, BaseEstimator):
             "allowed_pairs": ["__".join(pair) for pair in self.allowed_pairs],
             "rows_in": int(len(out)),
             "rows_pass": int(len(filtered)),
-            "rows_fail": int(len(out) - len(filtered)),
+            "rows_fail": rows_fail,
+            "rows_dropped": rows_fail,
             "patients_in": int(out[self.patient_column].nunique()),
             "patients_pass": int(filtered[self.patient_column].nunique()),
             "specimens_in": int(
@@ -423,9 +568,8 @@ class PairedGroupFilter(TransformerMixin, BaseEstimator):
                 .shape[0]
             ),
             "before_pair_counts": before_counts,
-            "after_pair_counts": filtered[self.output_column]
-            .value_counts(dropna=False)
-            .to_dict(),
+            "after_pair_counts": after_pair_counts,
+            "after_pair_row_counts": after_pair_counts,
         }
         return filtered
 

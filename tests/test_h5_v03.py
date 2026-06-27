@@ -12,8 +12,10 @@ sys.path.insert(0, "/Users/sad/dev/container/tests/v0_3")
 from xrd_preprocessing import (  # noqa: E402
     H5SessionFilter,
     calibrant_thickness_h5_filters,
+    filter_h5_session_df,
     filter_h5_sessions,
     h5_to_df,
+    list_h5_measurement_stage_sets,
     list_h5_sessions,
 )
 
@@ -341,6 +343,37 @@ def test_list_and_filter_h5_sessions_from_archive_attrs_only(tmp_path):
         "sample_02_new"
     ]
     assert selected_df["calibration_session_uid"].tolist() == ["calib-uid"]
+
+    selected_from_df = filter_h5_session_df(
+        session_df,
+        [H5SessionFilter("started_at", op="date>=", value="2026-01-01")],
+        session_category="SAMPLE",
+    )
+    stage_frames = list_h5_measurement_stage_sets(
+        archive_path,
+        session_df=session_df,
+        stage_filters={
+            "before": [],
+            "after_date": [
+                H5SessionFilter("started_at", op="date>=", value="2026-01-01")
+            ],
+            "after_diagnosis": [
+                H5SessionFilter("specimen_status", op="in", values=["BENIGN"])
+            ],
+        },
+    )
+
+    assert selected_from_df["archive_session_name"].tolist() == ["sample_02_new"]
+    assert stage_frames["before"]["archive_session_name"].tolist() == [
+        "sample_01_old",
+        "sample_02_new",
+    ]
+    assert stage_frames["after_date"]["archive_session_name"].tolist() == [
+        "sample_02_new"
+    ]
+    assert stage_frames["after_diagnosis"]["archive_session_name"].tolist() == [
+        "sample_02_new"
+    ]
 
 
 def test_h5_session_filters_can_use_poni_q_range_before_frame_loading(tmp_path):

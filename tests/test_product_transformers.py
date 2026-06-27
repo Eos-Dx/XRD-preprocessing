@@ -8,6 +8,9 @@ from xrd_preprocessing import (
     ConstantQRangeTransformer,
     DropColumnsTransformer,
     H5BlobDataFrameTransformer,
+    H5MeasurementSetAuditTransformer,
+    H5SessionFilter,
+    H5SessionSelectorTransformer,
     H5ToDataFrameTransformer,
     JoblibWriterTransformer,
     PairedGroupFilter,
@@ -49,6 +52,58 @@ def test_h5_to_dataframe_transformer_returns_measurements_and_keeps_calibration(
     ]
 
 
+def test_h5_selector_audit_and_reader_transformer_chain(monkeypatch):
+    import xrd_preprocessing.product_transformers as product_transformers
+
+    session_rows = pd.DataFrame(
+        {
+            "session_path": ["/old", "/new"],
+            "category": ["SAMPLE", "SAMPLE"],
+            "started_at": ["2025-12-31", "2026-01-01"],
+        }
+    )
+    measurement_rows = pd.DataFrame(
+        {
+            "session_path": ["/old", "/new"],
+            "id": ["old", "new"],
+        }
+    )
+    monkeypatch.setattr(
+        product_transformers,
+        "list_h5_sessions",
+        lambda _path: session_rows,
+    )
+    monkeypatch.setattr(
+        product_transformers,
+        "list_h5_measurement_stage_sets",
+        lambda _path, **_kwargs: {
+            "before": measurement_rows,
+            "after_date": measurement_rows.iloc[[1]].copy(),
+        },
+    )
+    selector = H5SessionSelectorTransformer(
+        filters=[H5SessionFilter("started_at", op="date>=", value="2026-01-01")],
+        session_category="SAMPLE",
+    )
+    audit = H5MeasurementSetAuditTransformer(
+        stage_filters={
+            "before": [],
+            "after_date": [
+                H5SessionFilter("started_at", op="date>=", value="2026-01-01")
+            ],
+        }
+    )
+    reader = H5ToDataFrameTransformer(reader=_fake_h5_reader)
+    manifest = selector.fit_transform("/tmp/synthetic.h5")
+    manifest = audit.fit_transform(manifest)
+    out = reader.fit_transform(manifest)
+
+    assert "session_df" in manifest
+    assert "h5_stage_frames" in manifest
+    assert out["id"].tolist() == ["synthetic.h5"]
+    assert _fake_h5_reader.kwargs["h5_session_df"] is manifest["session_df"]
+
+
 def test_product_column_builder_groups_status_at_specimen_level():
     df = pd.DataFrame(
         {
@@ -86,8 +141,10 @@ def test_product_status_and_paired_group_filters_are_transformers():
         )
     )
 
-    grouped = ProductStatusGroupFilter(["BENIGN", "CANCER", "NORMAL"]).fit_transform(df)
-    paired = PairedGroupFilter().fit_transform(grouped)
+    group_filter = ProductStatusGroupFilter(["BENIGN", "CANCER", "NORMAL"])
+    grouped = group_filter.fit_transform(df)
+    pair_filter = PairedGroupFilter()
+    paired = pair_filter.fit_transform(grouped)
 
     assert grouped["product_status_group"].tolist() == [
         "BENIGN",
@@ -101,6 +158,13 @@ def test_product_status_and_paired_group_filters_are_transformers():
     assert set(paired["one_to_one_pair_type"]) == {
         "BENIGN__CANCER",
         "BENIGN__NORMAL",
+    }
+    assert group_filter.stats_["after_counts"] == group_filter.stats_["counts_pass"]
+    assert group_filter.stats_["rows_dropped"] == group_filter.stats_["rows_fail"]
+    assert pair_filter.stats_["rows_dropped"] == pair_filter.stats_["rows_fail"]
+    assert pair_filter.stats_["after_pair_row_counts"] == {
+        "BENIGN__CANCER": 2,
+        "BENIGN__NORMAL": 2,
     }
 
 
