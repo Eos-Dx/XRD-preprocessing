@@ -267,7 +267,7 @@ AzimuthalIntegration(error_model="poisson")
 SNRTransformer(snr_method="poisson")
 SNRFilter(min_snr_db=20.0)
 PatientSpecimenValidityFilter
-QRangeNormalizer(q_min=6.7, q_max=7.1)
+QRangeValueNormalizer(q_min=6.7, q_max=7.1, statistic="median")
 RadialProfileValueFilter(optional product signal gate)
 product-specific analysis
 ```

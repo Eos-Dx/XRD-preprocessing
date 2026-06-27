@@ -55,7 +55,7 @@ from xrd_preprocessing import (
     AzimuthalIntegration,
     FaultyPixelDetector,
     PatientSpecimenValidityFilter,
-    QRangeNormalizer,
+    QRangeValueNormalizer,
     RadialProfileSnapshot,
     SNRFilter,
     SNRTransformer,
@@ -93,9 +93,10 @@ pipeline = Pipeline(
         ),
         (
             "normalize",
-            QRangeNormalizer(
+            QRangeValueNormalizer(
                 q_min=6.7,
                 q_max=7.1,
+                statistic="median",
                 save_initial_data=save_pipeline_stages,
             ),
         ),
@@ -126,7 +127,7 @@ radial_profile_data_after_normalization
 `radial_profile_data_raw` is created by:
 
 ```python
-QRangeNormalizer(save_initial_data=True)
+QRangeValueNormalizer(save_initial_data=True)
 ```
 
 It stores the profile before normalization.

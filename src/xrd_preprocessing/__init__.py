@@ -64,7 +64,12 @@ from .faulty_pixels import (
     detect_faulty_pixels,
     detect_hot_pixels,
 )
-from .normalization import QRangeNormalizer, normalize_profile_by_q_range
+from .normalization import (
+    QRangeNormalizer,
+    QRangeValueNormalizer,
+    normalize_profile_by_q_range,
+    normalize_profile_by_q_range_value,
+)
 from .transformers import (
     ConstantQRangeTransformer,
     DropColumnsTransformer,
@@ -134,6 +139,7 @@ __all__ = [
     "ProductStatusGroupFilter",
     "RadialProfileValueFilter",
     "QRangeNormalizer",
+    "QRangeValueNormalizer",
     "RadialProfileSnapshot",
     "RequiredColumnsTransformer",
     "SNRFilter",
@@ -166,6 +172,7 @@ __all__ = [
     "list_h5_sessions",
     "load_preprocessing_config",
     "normalize_profile_by_q_range",
+    "normalize_profile_by_q_range_value",
     "parse_bruker_header_preview",
     "parse_gfrm_header",
     "preprocessing_config_path",

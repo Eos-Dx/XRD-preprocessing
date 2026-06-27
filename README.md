@@ -27,7 +27,7 @@ H5 container
 -> SNRTransformer(snr_method="poisson")
 -> SNRFilter(min_snr_db=20.0)
 -> PatientSpecimenValidityFilter
--> QRangeNormalizer(q_min=6.7, q_max=7.1)
+-> QRangeValueNormalizer(q_min=6.7, q_max=7.1, statistic="median")
 -> RadialProfileValueFilter(optional product signal gate)
 ```
 
@@ -49,7 +49,7 @@ product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
 Transformer contract:
 
 ```text
-v0.1.2-beta product movement should be expressed as transformers
+v0.1.3-beta product movement should be expressed as transformers
 every DataFrame-changing product step should support fit_transform
 H5SessionSelectorTransformer returns a manifest with archive_path, all_session_df, selected session_df, and h5_filters
 H5MeasurementSetAuditTransformer adds stage count DataFrames without loading detector arrays

@@ -18,7 +18,7 @@ H5 container
 -> SNRTransformer
 -> SNRFilter
 -> PatientSpecimenValidityFilter
--> QRangeNormalizer
+-> QRangeValueNormalizer
 -> RadialProfileValueFilter(optional product signal gate)
 -> product-specific analysis
 ```
@@ -600,7 +600,7 @@ error if they are missing.
 What happens:
 
 ```text
-remaining radial profiles are divided by area in q = 6.7..7.1 nm^-1
+remaining radial profiles are divided by a value statistic in q = 6.7..7.1 nm^-1
 ```
 
 Why:
@@ -610,7 +610,7 @@ normalization puts profiles on a comparable scale before product feature extract
 ```
 
 ```python
-QRangeNormalizer(q_min=6.7, q_max=7.1)
+QRangeValueNormalizer(q_min=6.7, q_max=7.1, statistic="median")
 ```
 
 Default behavior:
@@ -674,7 +674,7 @@ from xrd_preprocessing import (
     AzimuthalIntegration,
     FaultyPixelDetector,
     PatientSpecimenValidityFilter,
-    QRangeNormalizer,
+    QRangeValueNormalizer,
     RadialProfileSnapshot,
     SNRFilter,
     SNRTransformer,
@@ -723,9 +723,10 @@ pipeline = Pipeline(
         ),
         (
             "normalize",
-            QRangeNormalizer(
+            QRangeValueNormalizer(
                 q_min=6.7,
                 q_max=7.1,
+                statistic="median",
                 save_initial_data=save_pipeline_stages,
             ),
         ),
