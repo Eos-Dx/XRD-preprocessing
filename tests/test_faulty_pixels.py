@@ -114,21 +114,29 @@ def test_faulty_pixel_detector_transform():
     )
     out = FaultyPixelDetector().fit_transform(df)
     assert "faulty_pixel_mask" in out.columns
-    assert "invalid_pixel_mask" in out.columns
-    assert "suspected_hot_pixel_mask" in out.columns
-    assert "pyfai_faulty_pixel_mask" in out.columns
-    assert "faulty_pixel_reason_map" in out.columns
-    assert "faulty_pixel_reason_counts" in out.columns
+    assert "invalid_pixel_mask" not in out.columns
+    assert "suspected_hot_pixel_mask" not in out.columns
+    assert "pyfai_faulty_pixel_mask" not in out.columns
+    assert "faulty_pixel_reason_map" not in out.columns
+    assert "faulty_pixel_reason_counts" not in out.columns
     assert [2, 1] in out["faulty_pixel_mask"].iloc[0].tolist()
-    assert [2, 1] in out["suspected_hot_pixel_mask"].iloc[0].tolist()
     assert [1, 2] in out["faulty_pixel_mask"].iloc[1].tolist()
-    assert [1, 2] in out["invalid_pixel_mask"].iloc[1].tolist()
     assert [3, 3] in out["faulty_pixel_mask"].iloc[2].tolist()
-    assert [3, 3] in out["invalid_pixel_mask"].iloc[2].tolist()
-    assert out["pyfai_faulty_pixel_mask"].iloc[0][2, 1] == 1
-    assert out["faulty_pixel_reason_map"].iloc[0][2, 1] == FAULTY_REASON_SATURATED
-    assert out["faulty_pixel_reason_map"].iloc[2][3, 3] == FAULTY_REASON_NONFINITE
-    assert out["faulty_pixel_reason_counts"].iloc[2]["nan_or_inf"] == 1
+
+    detailed = FaultyPixelDetector(include_details=True).fit_transform(df)
+    assert "faulty_pixel_mask" in detailed.columns
+    assert "invalid_pixel_mask" in detailed.columns
+    assert "suspected_hot_pixel_mask" in detailed.columns
+    assert "pyfai_faulty_pixel_mask" in detailed.columns
+    assert "faulty_pixel_reason_map" in detailed.columns
+    assert "faulty_pixel_reason_counts" in detailed.columns
+    assert [2, 1] in detailed["suspected_hot_pixel_mask"].iloc[0].tolist()
+    assert [1, 2] in detailed["invalid_pixel_mask"].iloc[1].tolist()
+    assert [3, 3] in detailed["invalid_pixel_mask"].iloc[2].tolist()
+    assert detailed["pyfai_faulty_pixel_mask"].iloc[0][2, 1] == 1
+    assert detailed["faulty_pixel_reason_map"].iloc[0][2, 1] == FAULTY_REASON_SATURATED
+    assert detailed["faulty_pixel_reason_map"].iloc[2][3, 3] == FAULTY_REASON_NONFINITE
+    assert detailed["faulty_pixel_reason_counts"].iloc[2]["nan_or_inf"] == 1
 
 
 def test_find_image_column_fallback_and_errors():
@@ -151,7 +159,7 @@ def test_faulty_pixel_detector_reason_map_marks_negative_and_saturated():
     image[2, 2] = np.nan
     image[3, 3] = 501.0
 
-    out = FaultyPixelDetector().fit_transform(
+    out = FaultyPixelDetector(include_details=True).fit_transform(
         pd.DataFrame({"measurement_data": [image]})
     )
     reason_map = out["faulty_pixel_reason_map"].iloc[0]
@@ -177,7 +185,7 @@ def test_low_background_noise_is_not_mass_hot_pixels():
     image = rng.normal(0.05, 0.03, size=(80, 80))
     image[20, 20] = 501.0
 
-    out = FaultyPixelDetector().fit_transform(
+    out = FaultyPixelDetector(include_details=True).fit_transform(
         pd.DataFrame({"measurement_data": [image]})
     )
     pixels = {tuple(pixel) for pixel in out["suspected_hot_pixel_mask"].iloc[0]}
@@ -243,7 +251,10 @@ def test_beam_center_can_be_excluded_from_poni():
 Poni1: 0.4
 Poni2: 0.4
 """
-    out = FaultyPixelDetector(exclude_beam_center_radius=0.2).fit_transform(
+    out = FaultyPixelDetector(
+        exclude_beam_center_radius=0.2,
+        include_details=True,
+    ).fit_transform(
         pd.DataFrame({"measurement_data": [image], "ponifile": [poni]})
     )
 

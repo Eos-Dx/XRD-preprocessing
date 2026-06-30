@@ -171,6 +171,7 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
         local_hot_min_value: float = 500.0,
         exclude_beam_center_radius: float | None = 0.04,
         poni_column: str = "ponifile",
+        include_details: bool = False,
     ):
         self.image_column = image_column
         self.negative_threshold = float(negative_threshold)
@@ -179,6 +180,7 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
         self.local_hot_min_value = float(local_hot_min_value)
         self.exclude_beam_center_radius = exclude_beam_center_radius
         self.poni_column = poni_column
+        self.include_details = bool(include_details)
 
     def fit(self, df: pd.DataFrame, y=None):
         _ = df
@@ -231,6 +233,8 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
         image_column = _find_image_column(out, self.image_column)
 
         faulty_masks: list[np.ndarray] = []
+        invalid_counts: list[int] = []
+        hot_counts: list[int] = []
         pyfai_masks: list[np.ndarray] = []
         invalid_masks: list[np.ndarray] = []
         hot_masks: list[np.ndarray] = []
@@ -258,41 +262,46 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
             faulty = invalid | hot
 
             faulty_mask = _pixel_array(faulty)
-            invalid_mask = _pixel_array(invalid)
-            hot_mask = _pixel_array(hot)
-            reason_map = create_faulty_pixel_reason_map(
-                image,
-                dead_pixels=invalid_mask,
-                hot_pixels=hot_mask,
-                exclude_mask=exclude_mask,
-                negative_threshold=self.negative_threshold,
-            )
-
             faulty_masks.append(faulty_mask)
-            pyfai_masks.append(create_mask(faulty_mask, image.shape))
-            invalid_masks.append(invalid_mask)
-            hot_masks.append(hot_mask)
-            reason_maps.append(reason_map)
-            reason_counts.append(count_faulty_pixel_reasons(reason_map))
+            invalid_counts.append(len(invalid))
+            hot_counts.append(len(hot))
+
+            if self.include_details:
+                invalid_mask = _pixel_array(invalid)
+                hot_mask = _pixel_array(hot)
+                reason_map = create_faulty_pixel_reason_map(
+                    image,
+                    dead_pixels=invalid_mask,
+                    hot_pixels=hot_mask,
+                    exclude_mask=exclude_mask,
+                    negative_threshold=self.negative_threshold,
+                )
+                pyfai_masks.append(create_mask(faulty_mask, image.shape))
+                invalid_masks.append(invalid_mask)
+                hot_masks.append(hot_mask)
+                reason_maps.append(reason_map)
+                reason_counts.append(count_faulty_pixel_reasons(reason_map))
 
         out["faulty_pixel_mask"] = faulty_masks
-        out["pyfai_faulty_pixel_mask"] = pyfai_masks
-        out["invalid_pixel_mask"] = invalid_masks
-        out["suspected_hot_pixel_mask"] = hot_masks
-        out["faulty_pixel_reason_map"] = reason_maps
-        out["faulty_pixel_reason_counts"] = reason_counts
+        if self.include_details:
+            out["pyfai_faulty_pixel_mask"] = pyfai_masks
+            out["invalid_pixel_mask"] = invalid_masks
+            out["suspected_hot_pixel_mask"] = hot_masks
+            out["faulty_pixel_reason_map"] = reason_maps
+            out["faulty_pixel_reason_counts"] = reason_counts
 
         self.stats_ = {
             "image_column": image_column,
             "n_images": int(len(out)),
             "faulty_pixels_per_row": [int(len(mask)) for mask in faulty_masks],
-            "invalid_pixels_per_row": [int(len(mask)) for mask in invalid_masks],
-            "suspected_hot_pixels_per_row": [int(len(mask)) for mask in hot_masks],
+            "invalid_pixels_per_row": invalid_counts,
+            "suspected_hot_pixels_per_row": hot_counts,
             "total_faulty_pixels": int(sum(len(mask) for mask in faulty_masks)),
-            "total_invalid_pixels": int(sum(len(mask) for mask in invalid_masks)),
-            "total_suspected_hot_pixels": int(sum(len(mask) for mask in hot_masks)),
+            "total_invalid_pixels": int(sum(invalid_counts)),
+            "total_suspected_hot_pixels": int(sum(hot_counts)),
             "detect_negative_pixels": self.detect_negative_pixels,
             "detect_local_hot_pixels": self.detect_local_hot_pixels,
+            "include_details": self.include_details,
             "hot_pixel_rule": (
                 f"finite and >= {self.negative_threshold:g} "
                 f"and > {self.local_hot_min_value:g}"

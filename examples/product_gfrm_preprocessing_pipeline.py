@@ -187,7 +187,7 @@ def _(AzimuthalIntegration, faulty_df, npt, thickness_reference_mm):
         npt=npt,
         calibration_mode="poni",
         column="measurement_data",
-        mask_column="pyfai_faulty_pixel_mask",
+        mask_column="faulty_pixel_mask",
         error_model="poisson",
         thickness_reference_mm=thickness_reference_mm,
     )
@@ -365,7 +365,7 @@ def _(mo, normalized_df):
         ```text
         rows = {len(normalized_df)}
         columns include:
-        pyfai_faulty_pixel_mask
+        faulty_pixel_mask
         q_range
         radial_profile_data
         radial_profile_sigma
@@ -408,7 +408,7 @@ def _(
                     npt=npt,
                     calibration_mode="poni",
                     column="measurement_data",
-                    mask_column="pyfai_faulty_pixel_mask",
+                    mask_column="faulty_pixel_mask",
                     error_model="poisson",
                     thickness_reference_mm=thickness_reference_mm,
                 ),

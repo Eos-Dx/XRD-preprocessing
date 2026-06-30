@@ -138,6 +138,7 @@ def _(FaultyPixelDetector, beam_zone_radius_frac, df):
         detect_local_hot_pixels=True,
         local_hot_min_value=500.0,
         exclude_beam_center_radius=beam_zone_radius_frac,
+        include_details=True,
     )
     detected_df = detector.fit_transform(df)
     return detected_df, detector

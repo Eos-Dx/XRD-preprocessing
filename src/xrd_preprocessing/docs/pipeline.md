@@ -433,9 +433,7 @@ Beam zone is excluded from all faulty outputs.
 Key output:
 
 ```text
-pyfai_faulty_pixel_mask
-faulty_pixel_reason_map
-faulty_pixel_reason_counts
+faulty_pixel_mask
 ```
 
 ## 5. Azimuthal Integration
@@ -461,7 +459,7 @@ thick samples require thickness correction
 ```python
 AzimuthalIntegration(
     calibration_mode="poni",
-    mask_column="pyfai_faulty_pixel_mask",
+    mask_column="faulty_pixel_mask",
     error_model="poisson",
     thickness_reference_mm=<explicit float>,
 )
@@ -472,7 +470,7 @@ If the H5/product DataFrame contains per-row calibrant/reference thickness:
 ```python
 AzimuthalIntegration(
     calibration_mode="poni",
-    mask_column="pyfai_faulty_pixel_mask",
+    mask_column="faulty_pixel_mask",
     error_model="poisson",
     thickness_reference_column="calibrant_thickness_mm",
 )
@@ -484,7 +482,7 @@ Required columns:
 measurement_data
 ponifile
 sample_thickness_mm
-pyfai_faulty_pixel_mask
+faulty_pixel_mask
 ```
 
 Optional per-row reference column:
@@ -713,7 +711,7 @@ pipeline = Pipeline(
             "integrate",
             AzimuthalIntegration(
                 calibration_mode="poni",
-                mask_column="pyfai_faulty_pixel_mask",
+                mask_column="faulty_pixel_mask",
                 error_model="poisson",
                 thickness_reference_column="calibrant_thickness_mm",
             ),

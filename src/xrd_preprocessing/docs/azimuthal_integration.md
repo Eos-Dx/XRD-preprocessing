@@ -87,7 +87,7 @@ from xrd_preprocessing import AzimuthalIntegration
 integrator = AzimuthalIntegration(
     calibration_mode="poni",
     column="measurement_data",
-    mask_column="pyfai_faulty_pixel_mask",
+    mask_column="faulty_pixel_mask",
     error_model="poisson",
     thickness_adjustment=True,
     thickness_reference_column="calibrant_thickness_mm",
@@ -105,7 +105,7 @@ ponifile                   PONI text
 sample_thickness_mm        sample thickness in mm
 interpolation_q_range      optional tuple, for example (2.0, 23.0)
 azimuthal_range            optional azimuth range
-pyfai_faulty_pixel_mask    optional uint8 mask, 1 = exclude
+faulty_pixel_mask          optional Nx2 pixel coordinates from FaultyPixelDetector
 calibrant_thickness_mm          optional calibrant/reference thickness in mm
 ```
 

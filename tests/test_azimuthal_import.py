@@ -107,6 +107,31 @@ def test_azimuthal_integration_uses_row_mask_column():
     assert out["azimuthal_mask_pixels"].iloc[0] == 1
 
 
+def test_azimuthal_integration_accepts_faulty_pixel_coordinate_mask():
+    image = fake_image()
+    df = pd.DataFrame(
+        {
+            "measurement_data": [image],
+            "ponifile": [fake_poni()],
+            "interpolation_q_range": [None],
+            "azimuthal_range": [None],
+            "faulty_pixel_mask": [np.asarray([[8, 8], [8, 9]])],
+            "sample_thickness_mm": [11.0],
+        }
+    )
+
+    out = AzimuthalIntegration(
+        npt=32,
+        calibration_mode="poni",
+        mask_column="faulty_pixel_mask",
+        thickness_reference_mm=11.0,
+    ).fit_transform(df)
+
+    assert out["q_range"].iloc[0].shape == (32,)
+    assert out["azimuthal_mask_source"].iloc[0] == "faulty_pixel_mask"
+    assert out["azimuthal_mask_pixels"].iloc[0] == 2
+
+
 def test_azimuthal_integration_keeps_per_row_mask_counts():
     image = fake_image()
     masks = [np.zeros_like(image, dtype=np.uint8), np.zeros_like(image, dtype=np.uint8)]

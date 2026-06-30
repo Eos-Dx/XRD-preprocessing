@@ -76,12 +76,8 @@ def plot_faulty_counts(df: pd.DataFrame) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(10, 3), constrained_layout=True)
     labels = [str(value).replace("20260608_", "") for value in df["sample_id"]]
     faulty = [len(value) for value in df["faulty_pixel_mask"]]
-    invalid = [len(value) for value in df["invalid_pixel_mask"]]
-    hot = [len(value) for value in df["suspected_hot_pixel_mask"]]
     x = np.arange(len(labels))
-    ax.bar(x - 0.25, invalid, width=0.25, label="invalid")
-    ax.bar(x, hot, width=0.25, label="hot")
-    ax.bar(x + 0.25, faulty, width=0.25, label="total")
+    ax.bar(x, faulty, width=0.45, label="faulty")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
     ax.set_ylabel("pixels")

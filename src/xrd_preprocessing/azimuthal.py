@@ -256,6 +256,20 @@ def _finite_float(value: Any) -> float | None:
     return float(numeric) if np.isfinite(numeric) else None
 
 
+def _coerce_integration_mask(row_mask: Any, image_shape: tuple[int, int]) -> np.ndarray:
+    """Accept either a pyFAI image mask or Nx2 faulty-pixel coordinates."""
+    mask = np.asarray(row_mask)
+    if mask.size == 0:
+        return create_mask([], image_shape)
+    if mask.ndim == 2 and mask.shape == image_shape:
+        return mask
+    if mask.ndim == 2 and mask.shape[1] == 2:
+        return create_mask(mask, image_shape)
+    if mask.ndim == 1 and mask.size % 2 == 0:
+        return create_mask(mask.reshape(-1, 2), image_shape)
+    raise ValueError("mask_column must contain a 2D image mask or Nx2 pixel coordinates.")
+
+
 def _perform_azimuthal_integration_with_metadata(
     row: pd.Series,
     *,
@@ -278,7 +292,7 @@ def _perform_azimuthal_integration_with_metadata(
     row_mask = row.get(mask_column) if mask_column is not None else None
     mask_source = "none"
     if row_mask is not None:
-        mask = np.asarray(row_mask)
+        mask = _coerce_integration_mask(row_mask, data.shape)
         mask_source = mask_column or "row"
     elif mask is not None:
         mask = np.asarray(mask)

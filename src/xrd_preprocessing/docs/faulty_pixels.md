@@ -120,16 +120,20 @@ expressed as detector-size fraction so it scales with image shape
 configurable if a different detector/protocol needs a different exclusion zone
 ```
 
-The beam zone is removed from all faulty-pixel outputs. It is not counted as
+The beam zone is removed from `faulty_pixel_mask`. It is not counted as
 detector damage.
-
-Beam-zone pixels remain code `0` in `faulty_pixel_reason_map` and are not
-included in `faulty_pixel_reason_counts`.
 
 ## Output Columns
 
+Default product output is intentionally minimal:
+
 ```text
 faulty_pixel_mask           Nx2 coordinates, invalid + suspected hot
+```
+
+Debug-only columns can be enabled with `include_details=True`:
+
+```text
 pyfai_faulty_pixel_mask     uint8 image mask, 1 = exclude
 invalid_pixel_mask          Nx2 coordinates, NaN/inf + negative
 suspected_hot_pixel_mask    Nx2 coordinates, values > 500

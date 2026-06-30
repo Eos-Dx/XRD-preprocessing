@@ -186,6 +186,7 @@ def _(
                 FaultyPixelDetector(
                     local_hot_min_value=500.0,
                     exclude_beam_center_radius=0.04,
+                    include_details=True,
                 ),
             ),
             (
@@ -194,7 +195,7 @@ def _(
                     npt=900,
                     calibration_mode="poni",
                     column="measurement_data",
-                    mask_column="pyfai_faulty_pixel_mask",
+                    mask_column="faulty_pixel_mask",
                     error_model="poisson",
                     thickness_reference_mm=thickness_reference_mm,
                 ),
