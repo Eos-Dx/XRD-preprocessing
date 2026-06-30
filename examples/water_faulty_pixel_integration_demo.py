@@ -33,6 +33,7 @@ def _():
         QRangeNormalizer,
         SNRFilter,
         SNRTransformer,
+        create_mask,
         extract_gfrm_archive,
         gfrm_to_photons,
     )
@@ -45,6 +46,7 @@ def _():
         QRangeNormalizer,
         SNRFilter,
         SNRTransformer,
+        create_mask,
         extract_gfrm_archive,
         gfrm_to_photons,
         mo,
@@ -184,9 +186,8 @@ def _(
             (
                 "faulty_pixels",
                 FaultyPixelDetector(
-                    local_hot_min_value=500.0,
+                    bright_pixel_min_value=500.0,
                     exclude_beam_center_radius=0.04,
-                    include_details=True,
                 ),
             ),
             (
@@ -286,25 +287,15 @@ def _(no_faulty_df, np, plt, with_faulty_df):
 
 @app.cell
 def _(np, water_df, with_faulty_df):
-    _reason_totals = {}
-    for _counts in with_faulty_df["faulty_pixel_reason_counts"]:
-        for _key, _value in _counts.items():
-            _reason_totals[_key] = _reason_totals.get(_key, 0) + int(_value)
-
     faulty_summary = {
         "frames": int(len(with_faulty_df)),
         "faulty_pixels": int(sum(len(_mask) for _mask in with_faulty_df["faulty_pixel_mask"])),
-        "invalid_pixels": int(sum(len(_mask) for _mask in with_faulty_df["invalid_pixel_mask"])),
-        "suspected_hot_pixels": int(
-            sum(len(_mask) for _mask in with_faulty_df["suspected_hot_pixel_mask"])
-        ),
         "negative_pixels_before_beam_exclusion": int(
             sum(np.sum(_image < 0) for _image in water_df["measurement_data"])
         ),
         "nan_or_inf_pixels_before_beam_exclusion": int(
             sum(np.sum(~np.isfinite(_image)) for _image in water_df["measurement_data"])
         ),
-        "reason_counts": _reason_totals,
     }
     return (faulty_summary,)
 
@@ -318,11 +309,8 @@ def _(faulty_summary, mo):
         ```text
         frames = {faulty_summary["frames"]}
         faulty_pixels = {faulty_summary["faulty_pixels"]}
-        invalid_pixels = {faulty_summary["invalid_pixels"]}
-        suspected_hot_pixels = {faulty_summary["suspected_hot_pixels"]}
         negative_pixels_before_beam_exclusion = {faulty_summary["negative_pixels_before_beam_exclusion"]}
         nan_or_inf_pixels_before_beam_exclusion = {faulty_summary["nan_or_inf_pixels_before_beam_exclusion"]}
-        reason_counts = {faulty_summary["reason_counts"]}
         ```
         """
     )
@@ -472,27 +460,19 @@ def _(no_faulty_df, np, plt, with_faulty_df):
 
 
 @app.cell
-def _(np, plt, water_df, with_faulty_df):
-    _hot_counts = [len(_mask) for _mask in with_faulty_df["suspected_hot_pixel_mask"]]
-    _example_idx = int(np.argmax(_hot_counts))
+def _(create_mask, np, plt, water_df, with_faulty_df):
+    _mask_counts = [len(_mask) for _mask in with_faulty_df["faulty_pixel_mask"]]
+    _example_idx = int(np.argmax(_mask_counts))
     _image = water_df["measurement_data"].iloc[_example_idx]
     _sample_id = water_df["sample_id"].iloc[_example_idx]
-    _invalid_pixels = with_faulty_df["invalid_pixel_mask"].iloc[_example_idx]
-    _hot_pixels = with_faulty_df["suspected_hot_pixel_mask"].iloc[_example_idx]
-    _mask = with_faulty_df["pyfai_faulty_pixel_mask"].iloc[_example_idx]
-    _invalid_mask = np.zeros_like(_mask, dtype=np.uint8)
-    _hot_mask = np.zeros_like(_mask, dtype=np.uint8)
-    for _y, _x in _invalid_pixels:
-        _invalid_mask[int(_y), int(_x)] = 1
-    for _y, _x in _hot_pixels:
-        _hot_mask[int(_y), int(_x)] = 1
+    _mask = create_mask(with_faulty_df["faulty_pixel_mask"].iloc[_example_idx], _image.shape)
     _suppressed = np.array(_image, copy=True)
     _suppressed[_mask.astype(bool)] = np.nan
 
     _fig, _axes = plt.subplots(
         nrows=1,
-        ncols=5,
-        figsize=(15, 4.2),
+        ncols=3,
+        figsize=(11, 4.2),
         constrained_layout=True,
     )
     _vmax = np.nanpercentile(_image, 99.5)
@@ -503,26 +483,16 @@ def _(np, plt, water_df, with_faulty_df):
     _axes[0].set_ylabel("row")
     _fig.colorbar(_im0, ax=_axes[0], fraction=0.046, pad=0.04)
 
-    _axes[1].imshow(_invalid_mask, cmap="gray_r", vmin=0, vmax=1)
-    _axes[1].set_title("Invalid mask")
+    _axes[1].imshow(_mask, cmap="gray_r", vmin=0, vmax=1)
+    _axes[1].set_title("Faulty-pixel mask")
     _axes[1].set_xlabel("column")
     _axes[1].set_ylabel("row")
 
-    _axes[2].imshow(_hot_mask, cmap="gray_r", vmin=0, vmax=1)
-    _axes[2].set_title("Suspected hot mask")
+    _im2 = _axes[2].imshow(_suppressed, cmap="inferno", vmin=0, vmax=_vmax)
+    _axes[2].set_title("Masked pixels hidden")
     _axes[2].set_xlabel("column")
     _axes[2].set_ylabel("row")
-
-    _axes[3].imshow(_mask, cmap="gray_r", vmin=0, vmax=1)
-    _axes[3].set_title("Combined PyFAI mask")
-    _axes[3].set_xlabel("column")
-    _axes[3].set_ylabel("row")
-
-    _im2 = _axes[4].imshow(_suppressed, cmap="inferno", vmin=0, vmax=_vmax)
-    _axes[4].set_title("Masked pixels hidden")
-    _axes[4].set_xlabel("column")
-    _axes[4].set_ylabel("row")
-    _fig.colorbar(_im2, ax=_axes[4], fraction=0.046, pad=0.04)
+    _fig.colorbar(_im2, ax=_axes[2], fraction=0.046, pad=0.04)
 
     _fig.suptitle(f"Mask decomposition for {_sample_id}")
     _fig
@@ -530,7 +500,7 @@ def _(np, plt, water_df, with_faulty_df):
 
 
 @app.cell
-def _(np, plt, with_faulty_df):
+def _(create_mask, np, plt, water_df, with_faulty_df):
     _n_items = len(with_faulty_df)
     _ncols = 4
     _nrows = int(np.ceil(_n_items / _ncols))
@@ -543,19 +513,22 @@ def _(np, plt, with_faulty_df):
     _axes = np.asarray(_axes).ravel()
 
     for _ax, _row in zip(_axes, with_faulty_df.itertuples(index=False)):
-        _mask = np.asarray(_row.pyfai_faulty_pixel_mask)
-        _hot_count = len(_row.suspected_hot_pixel_mask)
-        _invalid_count = len(_row.invalid_pixel_mask)
+        _image = water_df.loc[
+            water_df["sample_id"] == _row.sample_id,
+            "measurement_data",
+        ].iloc[0]
+        _mask = create_mask(_row.faulty_pixel_mask, _image.shape)
+        _mask_count = len(_row.faulty_pixel_mask)
         _label = _row.sample_id.replace("20260608_", "")
         _ax.imshow(_mask, cmap="gray_r", vmin=0, vmax=1)
-        _ax.set_title(f"{_label}\ninvalid={_invalid_count}, hot={_hot_count}", fontsize=8)
+        _ax.set_title(f"{_label}\nmasked={_mask_count}", fontsize=8)
         _ax.set_xticks([])
         _ax.set_yticks([])
 
     for _ax in _axes[_n_items:]:
         _ax.axis("off")
 
-    _fig.suptitle("Combined PyFAI masks for all Water-folder frames")
+    _fig.suptitle("Faulty-pixel masks for all Water-folder frames")
     _fig
     return
 

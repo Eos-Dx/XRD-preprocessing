@@ -88,22 +88,21 @@ def test_azimuthal_integration_uses_row_mask_column():
             "ponifile": [fake_poni()],
             "interpolation_q_range": [None],
             "azimuthal_range": [None],
-            "pyfai_faulty_pixel_mask": [np.zeros_like(image, dtype=np.uint8)],
+            "faulty_pixel_mask": [np.asarray([[8, 8]])],
             "sample_thickness_mm": [11.0],
         }
     )
-    df["pyfai_faulty_pixel_mask"].iloc[0][8, 8] = 1
 
     out = AzimuthalIntegration(
         npt=32,
         calibration_mode="poni",
-        mask_column="pyfai_faulty_pixel_mask",
+        mask_column="faulty_pixel_mask",
         thickness_reference_mm=11.0,
     ).fit_transform(df)
 
     assert out["q_range"].iloc[0].shape == (32,)
     assert np.isfinite(out["radial_profile_data"].iloc[0]).all()
-    assert out["azimuthal_mask_source"].iloc[0] == "pyfai_faulty_pixel_mask"
+    assert out["azimuthal_mask_source"].iloc[0] == "faulty_pixel_mask"
     assert out["azimuthal_mask_pixels"].iloc[0] == 1
 
 
@@ -134,17 +133,14 @@ def test_azimuthal_integration_accepts_faulty_pixel_coordinate_mask():
 
 def test_azimuthal_integration_keeps_per_row_mask_counts():
     image = fake_image()
-    masks = [np.zeros_like(image, dtype=np.uint8), np.zeros_like(image, dtype=np.uint8)]
-    masks[0][8, 8] = 1
-    masks[1][8, 8] = 1
-    masks[1][8, 9] = 1
+    masks = [np.asarray([[8, 8]]), np.asarray([[8, 8], [8, 9]])]
     df = pd.DataFrame(
         {
             "measurement_data": [image, image],
             "ponifile": [fake_poni(), fake_poni()],
             "interpolation_q_range": [None, None],
             "azimuthal_range": [None, None],
-            "pyfai_faulty_pixel_mask": masks,
+            "faulty_pixel_mask": masks,
             "sample_thickness_mm": [11.0, 11.0],
         }
     )
@@ -152,7 +148,7 @@ def test_azimuthal_integration_keeps_per_row_mask_counts():
     out = AzimuthalIntegration(
         npt=32,
         calibration_mode="poni",
-        mask_column="pyfai_faulty_pixel_mask",
+        mask_column="faulty_pixel_mask",
         thickness_reference_mm=11.0,
     ).fit_transform(df)
 

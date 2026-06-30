@@ -147,7 +147,7 @@ def _(input_df, mo, thickness_reference_mm):
 @app.cell
 def _(FaultyPixelDetector, input_df):
     faulty_detector = FaultyPixelDetector(
-        local_hot_min_value=500.0,
+        bright_pixel_min_value=500.0,
         exclude_beam_center_radius=0.04,
     )
     faulty_df = faulty_detector.fit_transform(input_df)
@@ -169,8 +169,6 @@ def _(faulty_df, faulty_stats, helpers, mo):
 
                 ```text
                 total_faulty_pixels = {faulty_stats["total_faulty_pixels"]}
-                total_invalid_pixels = {faulty_stats["total_invalid_pixels"]}
-                total_suspected_hot_pixels = {faulty_stats["total_suspected_hot_pixels"]}
                 beam_center_radius_frac = {faulty_stats["beam_center_radius_frac"]}
                 ```
                 """
@@ -398,7 +396,7 @@ def _(
             (
                 "faulty_pixels",
                 FaultyPixelDetector(
-                    local_hot_min_value=500.0,
+                    bright_pixel_min_value=500.0,
                     exclude_beam_center_radius=0.04,
                 ),
             ),

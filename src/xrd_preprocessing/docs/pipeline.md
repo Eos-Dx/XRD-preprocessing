@@ -414,7 +414,7 @@ the mask must be frame-local because GFRM conversion can create row-specific def
 
 ```python
 FaultyPixelDetector(
-    local_hot_min_value=500.0,
+    bright_pixel_min_value=500.0,
     exclude_beam_center_radius=0.04,
 )
 ```

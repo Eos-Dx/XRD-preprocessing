@@ -12,17 +12,6 @@ from ._compat import BaseEstimator, TransformerMixin
 
 Pixel = tuple[int, int]
 
-FAULTY_REASON_OK = 0
-FAULTY_REASON_NEGATIVE = -1
-FAULTY_REASON_NONFINITE = -2
-FAULTY_REASON_SATURATED = -3
-
-FAULTY_REASON_CODES = {
-    FAULTY_REASON_NEGATIVE: "negative",
-    FAULTY_REASON_NONFINITE: "nan_or_inf",
-    FAULTY_REASON_SATURATED: "saturated_or_hot",
-}
-
 _FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
 
@@ -50,44 +39,6 @@ def create_mask(
         if 0 <= y < size[0] and 0 <= x < size[1]:
             mask[y, x] = 1
     return mask
-
-
-def create_faulty_pixel_reason_map(
-    image: np.ndarray,
-    *,
-    dead_pixels: Iterable[Pixel] | np.ndarray | None = None,
-    hot_pixels: Iterable[Pixel] | np.ndarray | None = None,
-    exclude_mask: np.ndarray | None = None,
-    negative_threshold: float = 0.0,
-) -> np.ndarray:
-    """Create reason map: 0 OK, -1 negative, -2 NaN/inf, -3 hot."""
-    image = _as_2d_image(image)
-    reason_map = np.zeros(image.shape, dtype=np.int16)
-
-    if hot_pixels is not None:
-        for y, x in np.asarray(list(hot_pixels), dtype=int).reshape(-1, 2):
-            if 0 <= y < image.shape[0] and 0 <= x < image.shape[1]:
-                reason_map[y, x] = FAULTY_REASON_SATURATED
-
-    if dead_pixels is not None:
-        for y, x in np.asarray(list(dead_pixels), dtype=int).reshape(-1, 2):
-            if 0 <= y < image.shape[0] and 0 <= x < image.shape[1]:
-                reason_map[y, x] = FAULTY_REASON_NEGATIVE
-
-    reason_map[image < negative_threshold] = FAULTY_REASON_NEGATIVE
-    reason_map[~np.isfinite(image)] = FAULTY_REASON_NONFINITE
-    if exclude_mask is not None:
-        reason_map[np.asarray(exclude_mask, dtype=bool)] = FAULTY_REASON_OK
-    return reason_map
-
-
-def count_faulty_pixel_reasons(reason_map: np.ndarray) -> dict[str, int]:
-    """Count non-OK faulty-pixel reason codes in one reason map."""
-    reason_map = np.asarray(reason_map)
-    return {
-        name: int(np.sum(reason_map == code))
-        for code, name in FAULTY_REASON_CODES.items()
-    }
 
 
 def _find_image_column(df: pd.DataFrame, preferred: str) -> str:
@@ -145,13 +96,8 @@ def _beam_mask(
 
 
 def detect_faulty_pixels(image: np.ndarray, **kwargs) -> set[Pixel]:
-    """Return invalid and suspected-hot pixel coordinates for one image."""
+    """Return one set of excluded pixel coordinates for one image."""
     return FaultyPixelDetector(**kwargs).detect(image)
-
-
-def detect_hot_pixels(image: np.ndarray, **kwargs) -> set[Pixel]:
-    """Compatibility alias for detect_faulty_pixels."""
-    return detect_faulty_pixels(image, **kwargs)
 
 
 class FaultyPixelDetector(TransformerMixin, BaseEstimator):
@@ -159,7 +105,7 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
 
     The detector is intentionally simple. It does not estimate a permanent
     detector map from one image. It only marks pixels that are invalid for the
-    current frame or high enough to create spikes after azimuthal integration.
+    current frame or bright enough to create spikes after azimuthal integration.
     """
 
     def __init__(
@@ -167,20 +113,18 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
         image_column: str = "measurement_data",
         negative_threshold: float = 0.0,
         detect_negative_pixels: bool = True,
-        detect_local_hot_pixels: bool = True,
-        local_hot_min_value: float = 500.0,
+        detect_bright_pixels: bool = True,
+        bright_pixel_min_value: float = 500.0,
         exclude_beam_center_radius: float | None = 0.04,
         poni_column: str = "ponifile",
-        include_details: bool = False,
     ):
         self.image_column = image_column
         self.negative_threshold = float(negative_threshold)
         self.detect_negative_pixels = bool(detect_negative_pixels)
-        self.detect_local_hot_pixels = bool(detect_local_hot_pixels)
-        self.local_hot_min_value = float(local_hot_min_value)
+        self.detect_bright_pixels = bool(detect_bright_pixels)
+        self.bright_pixel_min_value = float(bright_pixel_min_value)
         self.exclude_beam_center_radius = exclude_beam_center_radius
         self.poni_column = poni_column
-        self.include_details = bool(include_details)
 
     def fit(self, df: pd.DataFrame, y=None):
         _ = df
@@ -197,49 +141,38 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
             mask |= image < self.negative_threshold
         return {(int(y), int(x)) for y, x in zip(*np.where(mask))}
 
-    def _suspected_hot_pixels(self, image: np.ndarray) -> set[Pixel]:
-        if not self.detect_local_hot_pixels:
+    def _bright_pixels(self, image: np.ndarray) -> set[Pixel]:
+        if not self.detect_bright_pixels:
             return set()
 
-        hot = (
+        bright = (
             np.isfinite(image)
             & (image >= self.negative_threshold)
-            & (image > self.local_hot_min_value)
+            & (image > self.bright_pixel_min_value)
         )
-        return {(int(y), int(x)) for y, x in zip(*np.where(hot))}
+        return {(int(y), int(x)) for y, x in zip(*np.where(bright))}
 
-    def detect_by_type(
+    def _detect_mask(
         self,
         image: np.ndarray,
         exclude_mask: np.ndarray | None = None,
-    ) -> dict[str, set[Pixel]]:
+    ) -> set[Pixel]:
         image = _as_2d_image(image)
         invalid = self._invalid_pixels(image)
-        hot = self._suspected_hot_pixels(image) - invalid
+        bright = self._bright_pixels(image) - invalid
+        pixels = invalid | bright
         if exclude_mask is not None:
-            invalid = {(y, x) for y, x in invalid if not exclude_mask[y, x]}
-            hot = {(y, x) for y, x in hot if not exclude_mask[y, x]}
-        return {
-            "invalid": invalid,
-            "hot": hot,
-        }
+            pixels = {(y, x) for y, x in pixels if not exclude_mask[y, x]}
+        return pixels
 
     def detect(self, image: np.ndarray) -> set[Pixel]:
-        typed = self.detect_by_type(image)
-        return typed["invalid"] | typed["hot"]
+        return self._detect_mask(image)
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
         image_column = _find_image_column(out, self.image_column)
 
         faulty_masks: list[np.ndarray] = []
-        invalid_counts: list[int] = []
-        hot_counts: list[int] = []
-        pyfai_masks: list[np.ndarray] = []
-        invalid_masks: list[np.ndarray] = []
-        hot_masks: list[np.ndarray] = []
-        reason_maps: list[np.ndarray] = []
-        reason_counts: list[dict[str, int]] = []
 
         for _, row in out.iterrows():
             image = _as_2d_image(row[image_column], image_column)
@@ -256,57 +189,25 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
                         center,
                         self.exclude_beam_center_radius,
                     )
-            typed = self.detect_by_type(image, exclude_mask=exclude_mask)
-            invalid = typed["invalid"]
-            hot = typed["hot"]
-            faulty = invalid | hot
+            faulty = self._detect_mask(image, exclude_mask=exclude_mask)
 
             faulty_mask = _pixel_array(faulty)
             faulty_masks.append(faulty_mask)
-            invalid_counts.append(len(invalid))
-            hot_counts.append(len(hot))
-
-            if self.include_details:
-                invalid_mask = _pixel_array(invalid)
-                hot_mask = _pixel_array(hot)
-                reason_map = create_faulty_pixel_reason_map(
-                    image,
-                    dead_pixels=invalid_mask,
-                    hot_pixels=hot_mask,
-                    exclude_mask=exclude_mask,
-                    negative_threshold=self.negative_threshold,
-                )
-                pyfai_masks.append(create_mask(faulty_mask, image.shape))
-                invalid_masks.append(invalid_mask)
-                hot_masks.append(hot_mask)
-                reason_maps.append(reason_map)
-                reason_counts.append(count_faulty_pixel_reasons(reason_map))
 
         out["faulty_pixel_mask"] = faulty_masks
-        if self.include_details:
-            out["pyfai_faulty_pixel_mask"] = pyfai_masks
-            out["invalid_pixel_mask"] = invalid_masks
-            out["suspected_hot_pixel_mask"] = hot_masks
-            out["faulty_pixel_reason_map"] = reason_maps
-            out["faulty_pixel_reason_counts"] = reason_counts
 
         self.stats_ = {
             "image_column": image_column,
             "n_images": int(len(out)),
             "faulty_pixels_per_row": [int(len(mask)) for mask in faulty_masks],
-            "invalid_pixels_per_row": invalid_counts,
-            "suspected_hot_pixels_per_row": hot_counts,
             "total_faulty_pixels": int(sum(len(mask) for mask in faulty_masks)),
-            "total_invalid_pixels": int(sum(invalid_counts)),
-            "total_suspected_hot_pixels": int(sum(hot_counts)),
             "detect_negative_pixels": self.detect_negative_pixels,
-            "detect_local_hot_pixels": self.detect_local_hot_pixels,
-            "include_details": self.include_details,
-            "hot_pixel_rule": (
+            "detect_bright_pixels": self.detect_bright_pixels,
+            "faulty_pixel_rule": (
                 f"finite and >= {self.negative_threshold:g} "
-                f"and > {self.local_hot_min_value:g}"
+                f"and > {self.bright_pixel_min_value:g}"
             ),
-            "local_hot_min_value": self.local_hot_min_value,
+            "bright_pixel_min_value": self.bright_pixel_min_value,
             "beam_center_excluded": self.exclude_beam_center_radius is not None,
             "beam_center_radius_frac": (
                 self.exclude_beam_center_radius
@@ -319,6 +220,3 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
     def fit_transform(self, df: pd.DataFrame, y=None) -> pd.DataFrame:
         _ = y
         return self.transform(df)
-
-
-HotPixelDetector = FaultyPixelDetector

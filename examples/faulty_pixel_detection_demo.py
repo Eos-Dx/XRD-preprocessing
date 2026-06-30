@@ -12,7 +12,6 @@ def _():
     from pathlib import Path
 
     import marimo as mo
-    import matplotlib.colors as mcolors
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
     import numpy as np
@@ -27,10 +26,10 @@ def _():
     if src_path.exists() and str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
 
-    from xrd_preprocessing.faulty_pixels import FaultyPixelDetector
+    from xrd_preprocessing.faulty_pixels import FaultyPixelDetector, create_mask
     from xrd_preprocessing.gfrm import extract_gfrm_archive, gfrm_to_photons
 
-    return FaultyPixelDetector, Path, extract_gfrm_archive, gfrm_to_photons, mcolors, mo, mpatches, np, pd, plt, repo_root
+    return FaultyPixelDetector, Path, create_mask, extract_gfrm_archive, gfrm_to_photons, mo, mpatches, np, pd, plt, repo_root
 
 
 @app.cell
@@ -92,8 +91,6 @@ def _(Path, extract_gfrm_archive, gfrm_to_photons, np, pd, repo_root):
                 "sample_id": _gfrm_path.parent.name,
                 "measurement_data": _image.astype(float),
                 "ponifile": poni_text,
-                "known_dead_pixels": set(),
-                "known_hot_pixels": set(),
                 "known_faulty_pixels": baseline_faults if _has_baseline else set(),
                 "truth_source": (
                     "baseline_faulty_pixels.npy + mask"
@@ -135,10 +132,9 @@ def _(beam_zone_radius_frac, df, mo, real_data_status):
 def _(FaultyPixelDetector, beam_zone_radius_frac, df):
     detector = FaultyPixelDetector(
         detect_negative_pixels=True,
-        detect_local_hot_pixels=True,
-        local_hot_min_value=500.0,
+        detect_bright_pixels=True,
+        bright_pixel_min_value=500.0,
         exclude_beam_center_radius=beam_zone_radius_frac,
-        include_details=True,
     )
     detected_df = detector.fit_transform(df)
     return detected_df, detector
@@ -222,37 +218,22 @@ def _(score_table):
 
 
 @app.cell
-def _(detected_df, np, pd):
-    faulty_reason_columns = [
-        "negative",
-        "nan_or_inf",
-        "saturated_or_hot",
-    ]
+def _(detected_df, pd):
     _rows = []
     for _, _row in detected_df.iterrows():
-        _image = np.asarray(_row["measurement_data"])
-        _reason_counts = _row["faulty_pixel_reason_counts"]
-        _pyfai_mask = np.asarray(_row["pyfai_faulty_pixel_mask"])
         _faulty_count = int(len(_row["faulty_pixel_mask"]))
-        _total_pixels = int(_image.size)
+        _total_pixels = int(_row["measurement_data"].size)
         _rows.append(
             {
                 "sample_id": _row["sample_id"],
                 "total_pixels": _total_pixels,
                 "faulty_pixels": _faulty_count,
                 "faulty_fraction": round(_faulty_count / _total_pixels, 6),
-                "pyfai_mask_pixels": int(np.sum(_pyfai_mask)),
-                "invalid_pixels": int(len(_row["invalid_pixel_mask"])),
-                "suspected_hot_pixels": int(len(_row["suspected_hot_pixel_mask"])),
-                **{
-                    _reason: int(_reason_counts.get(_reason, 0))
-                    for _reason in faulty_reason_columns
-                },
             }
         )
 
     faulty_stats_table = pd.DataFrame(_rows)
-    return faulty_reason_columns, faulty_stats_table
+    return (faulty_stats_table,)
 
 
 @app.cell
@@ -308,9 +289,9 @@ def _(mo):
 def _(
     beam_zone_radius_frac,
     corrected_images,
+    create_mask,
     detected_df,
     detector,
-    mcolors,
     mpatches,
     np,
     plt,
@@ -348,7 +329,7 @@ def _(
         corrected = corrected_images[_row_idx]
         known = np.array(sorted(_row["known_faulty_pixels"]), dtype=int)
         predicted = _row["faulty_pixel_mask"]
-        reason_map = _row["faulty_pixel_reason_map"]
+        predicted_mask = create_mask(predicted, original.shape)
         vmax = np.nanpercentile(original, 99.5)
 
         left = axes[_row_idx, 0]
@@ -373,22 +354,10 @@ def _(
         draw_beam_zone(left, _row, original.shape)
         left.legend(loc="upper right", fontsize=8)
 
-        fault_cmap = mcolors.ListedColormap(["red", "royalblue", "black", "white"])
-        fault_norm = mcolors.BoundaryNorm([-3.5, -2.5, -1.5, -0.5, 0.5], fault_cmap.N)
-        middle.imshow(reason_map, cmap=fault_cmap, norm=fault_norm)
-        middle.set_title(f"{_row['sample_id']} - detected reason map")
+        middle.imshow(predicted_mask, cmap="gray_r", vmin=0, vmax=1)
+        middle.set_title(f"{_row['sample_id']} - detected mask")
         middle.set_xlabel("column")
         middle.set_ylabel("row")
-        middle.text(
-            0.02,
-            0.98,
-            "-1 black = negative\n-2 blue = NaN/inf\n-3 red = saturated/hot",
-            transform=middle.transAxes,
-            va="top",
-            ha="left",
-            fontsize=8,
-            bbox={"facecolor": "white", "edgecolor": "0.8", "alpha": 0.9},
-        )
         draw_beam_zone(middle, _row, original.shape)
 
         im_right = right.imshow(corrected, cmap="inferno", vmin=0, vmax=vmax)
@@ -427,8 +396,7 @@ def _(detector, mo):
 
         The left heatmaps show the original detector images with known or
         baseline faulty pixels outlined in cyan. The middle panels show the
-        detector's reason-coded fault map: black for negative pixels, blue for
-        NaN/inf pixels, and red for saturated/hot pixels. The right heatmaps show the same images after
+        one detector mask. The right heatmaps show the same images after
         replacing detected faulty pixels by a local median estimate.
 
         The dashed blue circle marks the PONI beam-center radius zone. It is

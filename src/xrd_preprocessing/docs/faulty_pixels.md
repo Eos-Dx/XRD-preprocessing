@@ -32,7 +32,7 @@ Zero values are not faulty.
 from xrd_preprocessing import FaultyPixelDetector
 
 detector = FaultyPixelDetector(
-    local_hot_min_value=500.0,
+    bright_pixel_min_value=500.0,
     exclude_beam_center_radius=0.04,
 )
 
@@ -46,28 +46,28 @@ measurement_data   2D photon image
 ponifile           PONI text, used for beam-center exclusion
 ```
 
-## Hot Search
+## Faulty-Pixel Search
 
 There is no `3x3`, no `7x7`, no global z-score, no median filter, no MAD, and
 no iterative sliding window.
 
-The hot-pixel rule is absolute:
+The bright-pixel part of the faulty mask rule is absolute:
 
 ```text
-pixel is hot when finite and non-negative and pixel > local_hot_min_value
+pixel is masked when finite and non-negative and pixel > bright_pixel_min_value
 ```
 
 Default:
 
 ```text
-local_hot_min_value = 500.0
+bright_pixel_min_value = 500.0
 ```
 
 This threshold is deliberately high for the GFRM photon-converted detector
 data. We are trying to remove pixels that can create sharp spikes after
 azimuthal integration, not low or moderate signal variation.
 
-Grouped hot pixels are handled naturally. If several neighboring pixels are
+Grouped bright pixels are handled naturally. If several neighboring pixels are
 above `500`, every one of them is masked.
 
 ## Beam-Center Exclusion From PONI
@@ -125,20 +125,8 @@ detector damage.
 
 ## Output Columns
 
-Default product output is intentionally minimal:
-
 ```text
-faulty_pixel_mask           Nx2 coordinates, invalid + suspected hot
-```
-
-Debug-only columns can be enabled with `include_details=True`:
-
-```text
-pyfai_faulty_pixel_mask     uint8 image mask, 1 = exclude
-invalid_pixel_mask          Nx2 coordinates, NaN/inf + negative
-suspected_hot_pixel_mask    Nx2 coordinates, values > 500
-faulty_pixel_reason_map     2D reason-coded map
-faulty_pixel_reason_counts  counts by reason
+faulty_pixel_mask           Nx2 coordinates, invalid + bright faulty
 ```
 
 ## Transformer Stats
@@ -149,24 +137,11 @@ After `transform`, `FaultyPixelDetector.stats_` stores:
 image_column
 n_images
 faulty_pixels_per_row
-invalid_pixels_per_row
-suspected_hot_pixels_per_row
 total_faulty_pixels
-total_invalid_pixels
-total_suspected_hot_pixels
 detect_negative_pixels
-detect_local_hot_pixels
-hot_pixel_rule
-local_hot_min_value
+detect_bright_pixels
+faulty_pixel_rule
+bright_pixel_min_value
 beam_center_excluded
 beam_center_radius_frac
-```
-
-## Reason Codes
-
-```text
- 0 = OK
--1 = negative
--2 = NaN/inf
--3 = suspected hot
 ```
