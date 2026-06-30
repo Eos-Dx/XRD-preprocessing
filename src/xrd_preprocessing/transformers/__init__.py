@@ -13,6 +13,7 @@ from .metadata import (
     JoblibWriterTransformer,
     ProductColumnBuilder,
     RequiredColumnsTransformer,
+    SelectColumnsTransformer,
 )
 from .profiles import SimpleRadialProfileTransformer
 
@@ -28,5 +29,6 @@ __all__ = [
     "ProductColumnBuilder",
     "ProductStatusGroupFilter",
     "RequiredColumnsTransformer",
+    "SelectColumnsTransformer",
     "SimpleRadialProfileTransformer",
 ]

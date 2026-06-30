@@ -44,17 +44,19 @@ def load_preprocessing_config(source: str | Path | dict[str, Any] | None = None)
     """Load a preprocessing YAML config from path, bundled name, or mapping."""
     if source is None:
         source = DEFAULT_PREPROCESSING_CONFIG
+    source_path: Path | None = None
     if isinstance(source, dict):
         config = deepcopy(source)
     elif _looks_like_existing_path(source):
-        config = yaml.safe_load(Path(source).read_text(encoding="utf-8"))
+        source_path = Path(source)
+        config = yaml.safe_load(source_path.read_text(encoding="utf-8"))
     else:
         name = str(source)
         resource = files(PREPROCESSING_CONFIG_PACKAGE).joinpath(name)
         if not resource.is_file():
             raise FileNotFoundError(f"Preprocessing config not found: {source}")
         config = yaml.safe_load(resource.read_text(encoding="utf-8"))
-    config = _resolve_extends(config)
+    config = _resolve_extends(config, source_path=source_path)
     validate_preprocessing_config(config)
     return config
 
@@ -114,14 +116,27 @@ def _looks_like_existing_path(source: str | Path) -> bool:
         return False
 
 
-def _resolve_extends(config: dict[str, Any]) -> dict[str, Any]:
+def _resolve_extends(
+    config: dict[str, Any],
+    *,
+    source_path: Path | None = None,
+) -> dict[str, Any]:
     base_name = config.get("extends")
     if base_name is None:
         return config
-    resource = files(PREPROCESSING_CONFIG_PACKAGE).joinpath(str(base_name))
-    if not resource.is_file():
-        raise FileNotFoundError(f"Unknown preprocessing config template: {base_name}")
-    base = yaml.safe_load(resource.read_text(encoding="utf-8"))
+    local_base = None
+    if source_path is not None:
+        candidate = (source_path.parent / str(base_name)).resolve()
+        if candidate.is_file():
+            local_base = candidate
+    if local_base is not None:
+        base = yaml.safe_load(local_base.read_text(encoding="utf-8"))
+    else:
+        resource = files(PREPROCESSING_CONFIG_PACKAGE).joinpath(str(base_name))
+        if not resource.is_file():
+            raise FileNotFoundError(f"Unknown preprocessing config template: {base_name}")
+        base = yaml.safe_load(resource.read_text(encoding="utf-8"))
+    base = _resolve_extends(base, source_path=local_base)
     merged = _deep_merge(base, {k: v for k, v in config.items() if k != "extends"})
     return merged
 

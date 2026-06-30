@@ -7,7 +7,7 @@ preprocessing:
 
 xrd_preprocessing:
   version: local
-  release_tag: v0.1.4-beta
+  release_tag: v0.1.5-beta
 
 # Product wrappers should read input and output paths from config.
 # Relative paths are resolved by the product package against this YAML file.
@@ -41,8 +41,10 @@ metadata:
   # If true, product pipeline may drop heavy payload columns before writing
   # joblib. Use keep_payload_columns for specific debug columns that should
   # survive final output, e.g. radial_profile_data_raw or radial_profile_sigma.
+  # Set output_columns to keep only selected final columns in joblib.
   drop_payload_columns: true
   keep_payload_columns: []
+  output_columns: []
 
 # H5-level filters run before detector arrays are loaded.
 # `quality_exclusions` is the preferred product QC contract: exclude bad

@@ -205,6 +205,31 @@ class DropColumnsTransformer(TransformerMixin, BaseEstimator):
         return out
 
 
+class SelectColumnsTransformer(TransformerMixin, BaseEstimator):
+    """Keep configured columns in order and fail if any are missing."""
+
+    def __init__(self, columns: Sequence[str]) -> None:
+        self.columns = tuple(columns)
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y: Any = None):
+        _ = X
+        _ = y
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        missing = [column for column in self.columns if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing selected output columns: {missing}")
+        out = X.loc[:, list(self.columns)].copy()
+        self.stats_ = {
+            "filter_type": "select_columns",
+            "rows": int(len(out)),
+            "columns": list(self.columns),
+        }
+        return out
+
+
 class RequiredColumnsTransformer(TransformerMixin, BaseEstimator):
     """Fail if required columns are missing or invalid."""
 

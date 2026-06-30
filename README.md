@@ -49,7 +49,7 @@ product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
 Transformer contract:
 
 ```text
-v0.1.4-beta product movement should be expressed as transformers
+v0.1.5-beta product movement should be expressed as transformers
 every DataFrame-changing product step should support fit_transform
 H5SessionSelectorTransformer returns a manifest with archive_path, all_session_df, selected session_df, and h5_filters
 H5MeasurementSetAuditTransformer adds stage count DataFrames without loading detector arrays

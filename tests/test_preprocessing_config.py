@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import pandas as pd
+import yaml
 
 from xrd_preprocessing import (
     DEFAULT_PREPROCESSING_CONFIG,
@@ -21,7 +24,7 @@ def test_bundled_preprocessing_template_contract():
 
     config = load_preprocessing_config()
 
-    assert config["xrd_preprocessing"]["release_tag"] == "v0.1.4-beta"
+    assert config["xrd_preprocessing"]["release_tag"] == "v0.1.5-beta"
     assert config["preprocessing"]["version"] == "0.1-template"
     assert config["raw_data"]["source"] == "gfrm"
     assert "io" in config
@@ -99,6 +102,30 @@ def test_preprocessing_config_can_extend_bundled_template():
     assert config["filters"]["require_biopsy"] is True
     assert config["raw_data"]["source"] == "gfrm"
     assert config["integration"]["npt"] == 100
+
+
+def test_preprocessing_config_can_extend_local_yaml(tmp_path: Path):
+    base = load_preprocessing_config("preprocessing_branch_config_template.yaml")
+    base["metadata"]["output_columns"] = ["patientId", "radial_profile_data"]
+    base_path = tmp_path / "base.yaml"
+    child_path = tmp_path / "minimal.yaml"
+    base_path.write_text(yaml.safe_dump(base), encoding="utf-8")
+    child_path.write_text(
+        yaml.safe_dump(
+            {
+                "extends": "base.yaml",
+                "io": {"output_joblib_path": "minimal.joblib"},
+                "metadata": {"output_columns": ["patientId", "specimenId"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_preprocessing_config(child_path)
+
+    assert config["raw_data"]["source"] == "gfrm"
+    assert config["metadata"]["output_columns"] == ["patientId", "specimenId"]
+    assert config["io"]["output_joblib_path"] == "minimal.joblib"
 
 
 def test_h5_session_filter_uses_fallback_when_primary_column_is_missing():

@@ -82,6 +82,7 @@ from .transformers import (
     ProductColumnBuilder,
     ProductStatusGroupFilter,
     RequiredColumnsTransformer,
+    SelectColumnsTransformer,
     SimpleRadialProfileTransformer,
 )
 from .gfrm import (
@@ -142,6 +143,7 @@ __all__ = [
     "QRangeValueNormalizer",
     "RadialProfileSnapshot",
     "RequiredColumnsTransformer",
+    "SelectColumnsTransformer",
     "SNRFilter",
     "SNRTransformer",
     "SimpleRadialProfileTransformer",
