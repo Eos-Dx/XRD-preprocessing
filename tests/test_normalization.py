@@ -59,6 +59,17 @@ def test_q_range_normalizer_can_write_to_custom_output_column():
     np.testing.assert_allclose(out["radial_profile_data"].iloc[0], intensity)
 
 
+def test_normalize_profile_by_q_range_rejects_short_and_zero_area_profiles():
+    with pytest.raises(ValueError, match="at least two points"):
+        normalize_profile_by_q_range(np.asarray([6.8]), np.asarray([1.0]))
+
+    with pytest.raises(ValueError, match="Invalid normalization area"):
+        normalize_profile_by_q_range(
+            np.asarray([6.8, 6.9, 7.0]),
+            np.asarray([0.0, 0.0, 0.0]),
+        )
+
+
 def test_q_range_normalizer_requires_q_and_profile_columns():
     df = pd.DataFrame({"radial_profile_data": [np.ones(10)]})
 
@@ -100,6 +111,52 @@ def test_q_range_value_normalizer_updates_profile_and_adds_value_columns():
     np.testing.assert_allclose(out["radial_profile_data"].iloc[0], 1.0)
 
 
+@pytest.mark.parametrize(
+    ("statistic", "expected"),
+    [
+        ("mean", 3.0),
+        ("min", 1.0),
+        ("max", 5.0),
+    ],
+)
+def test_q_range_value_normalizer_statistics(statistic, expected):
+    q = np.asarray([6.7, 6.8, 6.9])
+    intensity = np.asarray([1.0, 3.0, 5.0])
+
+    normalized, scale = normalize_profile_by_q_range_value(
+        q,
+        intensity,
+        statistic=statistic,
+    )
+
+    assert scale == pytest.approx(expected)
+    np.testing.assert_allclose(normalized, intensity / expected)
+
+
+def test_q_range_value_normalizer_rejects_bad_inputs_and_statistic():
+    with pytest.raises(ValueError, match="at least one point"):
+        normalize_profile_by_q_range_value(np.asarray([]), np.asarray([]))
+
+    with pytest.raises(ValueError, match="has <1 point"):
+        normalize_profile_by_q_range_value(
+            np.asarray([1.0]),
+            np.asarray([1.0]),
+        )
+
+    with pytest.raises(ValueError, match="Unsupported q-range value statistic"):
+        normalize_profile_by_q_range_value(
+            np.asarray([6.8]),
+            np.asarray([1.0]),
+            statistic="mode",
+        )
+
+    with pytest.raises(ValueError, match="Invalid normalization value"):
+        normalize_profile_by_q_range_value(
+            np.asarray([6.8]),
+            np.asarray([0.0]),
+        )
+
+
 def test_q_range_value_normalizer_can_save_initial_profile():
     q = np.linspace(6.0, 8.0, 401)
     intensity = np.ones_like(q) * 4.0
@@ -109,3 +166,17 @@ def test_q_range_value_normalizer_can_save_initial_profile():
 
     assert "radial_profile_data_raw" in out.columns
     np.testing.assert_allclose(out["radial_profile_data_raw"].iloc[0], intensity)
+
+
+def test_q_range_value_normalizer_can_write_custom_output_and_requires_columns():
+    q = np.linspace(6.0, 8.0, 401)
+    intensity = np.ones_like(q) * 4.0
+    df = pd.DataFrame({"q_range": [q], "radial_profile_data": [intensity]})
+
+    out = QRangeValueNormalizer(output_column="normalized").fit_transform(df)
+
+    assert "normalized" in out.columns
+    np.testing.assert_allclose(out["radial_profile_data"].iloc[0], intensity)
+
+    with pytest.raises(ValueError, match="Missing required column"):
+        QRangeValueNormalizer().transform(pd.DataFrame({"q_range": [q]}))

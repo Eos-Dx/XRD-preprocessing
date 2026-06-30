@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from xrd_preprocessing import (
     FAULTY_REASON_NEGATIVE,
@@ -11,6 +12,13 @@ from xrd_preprocessing import (
     create_mask,
     detect_faulty_pixels,
 )
+from xrd_preprocessing.faulty_pixels import (
+    _beam_center_pixels,
+    _detector_config_float,
+    _find_image_column,
+    count_faulty_pixel_reasons,
+    detect_hot_pixels,
+)
 
 
 def test_create_mask_bounds_safe():
@@ -18,6 +26,18 @@ def test_create_mask_bounds_safe():
     assert mask.sum() == 2
     assert mask[0, 0] == 1
     assert mask[2, 2] == 1
+
+
+def test_create_mask_none_and_invalid_image_errors():
+    assert create_mask(None) is None
+
+    detector = FaultyPixelDetector()
+    try:
+        detector.detect(np.asarray([1.0, 2.0]))
+    except ValueError as exc:
+        assert "2D numeric image" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_create_faulty_pixel_reason_map():
@@ -32,6 +52,22 @@ def test_create_faulty_pixel_reason_map():
     assert reason_map[1, 1] == FAULTY_REASON_NONFINITE
     assert reason_map[2, 2] == FAULTY_REASON_SATURATED
     assert reason_map[3, 3] == 0
+    counts = count_faulty_pixel_reasons(reason_map)
+    assert counts["negative"] == 1
+    assert counts["nan_or_inf"] == 1
+    assert counts["saturated_or_hot"] == 1
+
+
+def test_detector_config_and_beam_center_invalid_cases():
+    assert _detector_config_float("{'pixel1': 0.1}", "pixel1") == 0.1
+    assert _detector_config_float("{}", "pixel1") is None
+    assert _beam_center_pixels("Poni1: 1\nPoni2: 1\n") is None
+    assert (
+        _beam_center_pixels(
+            "Detector_config: {'pixel1': 0, 'pixel2': 0.1}\nPoni1: 1\nPoni2: 1\n"
+        )
+        is None
+    )
 
 
 def test_detect_faulty_pixels_marks_invalid_and_hot_values():
@@ -93,6 +129,20 @@ def test_faulty_pixel_detector_transform():
     assert out["faulty_pixel_reason_map"].iloc[0][2, 1] == FAULTY_REASON_SATURATED
     assert out["faulty_pixel_reason_map"].iloc[2][3, 3] == FAULTY_REASON_NONFINITE
     assert out["faulty_pixel_reason_counts"].iloc[2]["nan_or_inf"] == 1
+
+
+def test_find_image_column_fallback_and_errors():
+    frame = pd.DataFrame(
+        {
+            "empty": [None],
+            "bad": ["not-image"],
+            "candidate": [np.ones((2, 2))],
+        }
+    )
+    assert _find_image_column(frame, "missing") == "candidate"
+
+    with pytest.raises(ValueError, match="No 2D numeric image column"):
+        _find_image_column(pd.DataFrame({"bad": ["not-image"]}), "missing")
 
 
 def test_faulty_pixel_detector_reason_map_marks_negative_and_saturated():
@@ -166,6 +216,22 @@ def test_zero_pixels_are_not_faulty_by_default():
     image = np.ones((5, 5))
     image[2, 2] = 0
     out = FaultyPixelDetector().fit_transform(pd.DataFrame({"measurement_data": [image]}))
+    assert out["faulty_pixel_mask"].iloc[0].tolist() == []
+
+
+def test_faulty_pixel_detector_flags_and_aliases():
+    image = np.ones((4, 4))
+    image[1, 1] = -1
+    image[2, 2] = 501
+
+    detector = FaultyPixelDetector(
+        detect_negative_pixels=False,
+        detect_local_hot_pixels=False,
+    )
+    assert detector.detect(image) == set()
+    assert detect_hot_pixels(image, local_hot_min_value=500) == {(1, 1), (2, 2)}
+
+    out = detector.fit_transform(pd.DataFrame({"measurement_data": [image]}))
     assert out["faulty_pixel_mask"].iloc[0].tolist() == []
 
 

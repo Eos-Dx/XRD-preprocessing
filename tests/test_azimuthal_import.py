@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from xrd_preprocessing import AzimuthalIntegration, perform_azimuthal_integration
+import xrd_preprocessing.azimuthal as azimuthal_module
 
 
 def fake_poni() -> str:
@@ -253,3 +254,83 @@ def test_azimuthal_integration_reference_thickness_column_missing_raises():
             calibration_mode="poni",
             thickness_reference_column="calibrant_thickness_mm",
         ).fit_transform(df)
+
+
+def test_row_values_validation_branches():
+    assert azimuthal_module._row_values(None, n_rows=2, name="x") is None
+    assert azimuthal_module._row_values(1.5, n_rows=2, name="x") == [1.5, 1.5]
+    assert azimuthal_module._row_values([1, 2], n_rows=2, name="x") == [1.0, 2.0]
+    with pytest.raises(TypeError, match="numeric"):
+        azimuthal_module._row_values("bad", n_rows=2, name="x")
+    with pytest.raises(ValueError, match="finite"):
+        azimuthal_module._row_values(np.nan, n_rows=2, name="x")
+    with pytest.raises(ValueError, match="one-dimensional"):
+        azimuthal_module._row_values([[1]], n_rows=1, name="x")
+    with pytest.raises(ValueError, match="length"):
+        azimuthal_module._row_values([1], n_rows=2, name="x")
+    with pytest.raises(ValueError, match="finite"):
+        azimuthal_module._row_values([1, np.nan], n_rows=2, name="x")
+
+
+def test_adjust_poni_distance_handles_missing_distance():
+    text, adjusted = azimuthal_module._adjust_poni_distance(
+        "Poni1: 0\n",
+        sample_thickness_mm=12,
+        reference_thickness_mm=10,
+    )
+
+    assert text == "Poni1: 0\n"
+    assert adjusted is None
+
+
+def test_resolve_thickness_error_and_warning_branches():
+    row = pd.Series({"sample_thickness_mm": 11.0, "calibrant_thickness_mm": 10.0})
+
+    with pytest.raises(ValueError, match="disabled"):
+        azimuthal_module._resolve_thickness(
+            row,
+            thickness_adjustment=False,
+            require_thickness_adjustment=True,
+            sample_thickness_column="sample_thickness_mm",
+            thickness_reference_mm=10.0,
+            thickness_reference_column=None,
+        )
+    with pytest.raises(ValueError, match="thickness_reference_mm"):
+        azimuthal_module._resolve_thickness(
+            row,
+            thickness_adjustment=True,
+            require_thickness_adjustment=True,
+            sample_thickness_column="sample_thickness_mm",
+            thickness_reference_mm=None,
+            thickness_reference_column=None,
+        )
+    with pytest.raises(ValueError, match="Missing required thickness reference"):
+        azimuthal_module._resolve_thickness(
+            row,
+            thickness_adjustment=True,
+            require_thickness_adjustment=True,
+            sample_thickness_column="sample_thickness_mm",
+            thickness_reference_mm=None,
+            thickness_reference_column="missing",
+        )
+    with pytest.raises(ValueError, match="Invalid thickness reference"):
+        azimuthal_module._resolve_thickness(
+            pd.Series({"sample_thickness_mm": 11.0, "calibrant_thickness_mm": np.nan}),
+            thickness_adjustment=True,
+            require_thickness_adjustment=True,
+            sample_thickness_column="sample_thickness_mm",
+            thickness_reference_mm=None,
+            thickness_reference_column="calibrant_thickness_mm",
+        )
+
+    with pytest.warns(RuntimeWarning, match="Missing required thickness column"):
+        sample, meta = azimuthal_module._resolve_thickness(
+            row,
+            thickness_adjustment=True,
+            require_thickness_adjustment=False,
+            sample_thickness_column="missing",
+            thickness_reference_mm=10.0,
+            thickness_reference_column=None,
+        )
+    assert sample is None
+    assert meta["thickness_adjustment_reliable"] is False

@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from xrd_preprocessing import SNRFilter, SNRTransformer, calculate_snr
+from xrd_preprocessing.snr import _calculate_poisson_snr, _trapz_compat
 
 
 def test_calculate_snr_poisson_default():
@@ -36,6 +37,42 @@ def test_snr_transformer_poisson():
     assert out["snr_method_used"].iloc[0] == "poisson"
     assert out["snr_db"].iloc[0] > 0
     assert "snr" not in out.columns
+
+
+def test_trapz_compat_manual_fallback(monkeypatch):
+    monkeypatch.delattr(np, "trapezoid", raising=False)
+    monkeypatch.delattr(np, "trapz", raising=False)
+
+    assert _trapz_compat(np.asarray([1.0]), np.asarray([0.0])) == 0.0
+    assert _trapz_compat(
+        np.asarray([1.0, 3.0, 5.0]),
+        np.asarray([0.0, 1.0, 2.0]),
+    ) == pytest.approx(6.0)
+
+
+def test_calculate_poisson_snr_scalar_and_invalid_sigma_branches():
+    scalar = _calculate_poisson_snr(np.asarray([1.0, 2.0]), np.asarray(1.0))
+    assert scalar["method"] == "poisson_invalid_sigma"
+
+    invalid = _calculate_poisson_snr(
+        np.asarray([1.0, np.nan, 2.0]),
+        np.asarray([0.0, 1.0, np.nan]),
+    )
+    assert invalid["method"] == "poisson_invalid_sigma"
+
+
+def test_snr_transformer_skips_scalar_and_short_profiles():
+    out = SNRTransformer().transform(
+        pd.DataFrame(
+            {
+                "radial_profile_data": [1.0, [1.0]],
+                "radial_profile_sigma": [1.0, [1.0]],
+            }
+        )
+    )
+
+    assert out["snr_method_used"].tolist() == [None, None]
+    assert out["snr_db"].isna().all()
 
 
 def test_snr_transformer_invalid_method():

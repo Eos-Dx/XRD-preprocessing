@@ -3,9 +3,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 import convert_gfrm_to_npy
 import gfrm_convert
+import xrd_preprocessing.gfrm as gfrm_module
 from xrd_preprocessing import (
     decode_gfrm,
     extract_gfrm_archive,
@@ -84,6 +86,69 @@ def test_fabio_is_primary_gfrm_decoder(tmp_path):
     assert metadata["ncols"] == 768
     assert array.shape == (512, 768)
     assert warnings == []
+
+
+def test_gfrm_validation_rejects_invalid_arrays():
+    metadata = {"nrows": 2, "ncols": 2}
+
+    with pytest.raises(TypeError, match="NumPy array"):
+        validate_gfrm_array([[1, 2]], metadata, "bad.gfrm")
+    with pytest.raises(ValueError, match="must be 2D"):
+        validate_gfrm_array(np.ones(2), metadata, "bad.gfrm")
+    with pytest.raises(ValueError, match="empty"):
+        validate_gfrm_array(np.ones((0, 2)), metadata, "bad.gfrm")
+    with pytest.raises(TypeError, match="numeric"):
+        validate_gfrm_array(np.array([["x"]], dtype=object), metadata, "bad.gfrm")
+
+
+def test_gfrm_validation_reports_shape_warnings():
+    transposed = validate_gfrm_array(
+        np.ones((3, 2)),
+        {"nrows": 2, "ncols": 3},
+        "frame.gfrm",
+    )
+    mismatch = validate_gfrm_array(
+        np.ones((4, 4)),
+        {"nrows": 2, "ncols": 3},
+        "frame.gfrm",
+    )
+
+    assert "transposed" in transposed[0]
+    assert "does not match" in mismatch[0]
+
+
+def test_gfrm_metadata_parser_rejects_missing_or_invalid_headers():
+    with pytest.raises(ValueError, match="Missing NEXP"):
+        gfrm_module._parse_eos_photon_metadata({"CCDPARM": "1 1 1 1 1"})
+    with pytest.raises(ValueError, match="NEXP must contain"):
+        gfrm_module._parse_eos_photon_metadata(
+            {"NEXP": "1 2", "CCDPARM": "1 1 1 1 1"}
+        )
+    with pytest.raises(ValueError, match="Cannot parse NEXP"):
+        gfrm_module._parse_eos_photon_metadata(
+            {"NEXP": "bad 2 3", "CCDPARM": "1 1 1 1 1"}
+        )
+    with pytest.raises(ValueError, match="Invalid e_per_ADU"):
+        gfrm_module._parse_eos_photon_metadata(
+            {"NEXP": "1 2 3", "CCDPARM": "1 0 1 1 1"}
+        )
+    with pytest.raises(ValueError, match="Invalid e_per_photon"):
+        gfrm_module._parse_eos_photon_metadata(
+            {"NEXP": "1 2 3", "CCDPARM": "1 1 0 1 1"}
+        )
+
+
+def test_read_gfrm_as_photons_without_save(monkeypatch):
+    monkeypatch.setattr(
+        "xrd_preprocessing.gfrm.gfrm_to_photons",
+        lambda path, mask_last_row=True: (np.ones((2, 2)), {"path": str(path)}),
+    )
+
+    photons, npy_path, metadata = read_gfrm_as_photons("fake.gfrm", save=False)
+
+    assert npy_path is None
+    assert photons.shape == (2, 2)
+    assert metadata == {"path": "fake.gfrm"}
 
 
 def test_gfrm_to_photons_preserves_negative_photons(tmp_path):

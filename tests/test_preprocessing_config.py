@@ -6,6 +6,7 @@ import pytest
 import pandas as pd
 import yaml
 
+import xrd_preprocessing.config as config_module
 from xrd_preprocessing import (
     DEFAULT_PREPROCESSING_CONFIG,
     H5SessionFilter,
@@ -151,3 +152,60 @@ def test_h5_session_filter_uses_fallback_when_primary_column_is_missing():
     filtered = filter_h5_session_df(frame, filters=filters, session_category="SAMPLE")
 
     assert filtered["started_at"].tolist() == ["2026-03-17T09:00:00"]
+
+
+def test_preprocessing_config_rejects_unknown_bundled_name_and_bad_mapping():
+    with pytest.raises(FileNotFoundError, match="Unknown bundled preprocessing config"):
+        preprocessing_config_path("missing.yaml")
+
+    with pytest.raises(FileNotFoundError, match="Preprocessing config not found"):
+        load_preprocessing_config("missing.yaml")
+
+    with pytest.raises(TypeError, match="must be a mapping"):
+        validate_preprocessing_config([])
+
+
+def test_preprocessing_config_validation_rejects_missing_sections_and_raw_source():
+    config = load_preprocessing_config()
+    config.pop("raw_data")
+    with pytest.raises(ValueError, match="Missing preprocessing config sections"):
+        validate_preprocessing_config(config)
+
+    config = load_preprocessing_config()
+    config.pop("one_to_one")
+    config.pop("one_to_many")
+    with pytest.raises(ValueError, match="Missing preprocessing branch contract"):
+        validate_preprocessing_config(config)
+
+    config = load_preprocessing_config()
+    config["aramis_preprocessing"] = {"branch": "bad"}
+    config["branch_settings"] = {}
+    with pytest.raises(ValueError, match="Unknown branch-specific"):
+        validate_preprocessing_config(config)
+
+    config = load_preprocessing_config()
+    config["raw_data"]["source"] = "bad"
+    with pytest.raises(ValueError, match="not in allowed_sources"):
+        validate_preprocessing_config(config)
+
+
+def test_preprocessing_config_validation_rejects_sample_column_mismatch():
+    config = load_preprocessing_config()
+    config["filters"]["thickness"]["sample"]["column"] = "wrong_thickness"
+
+    with pytest.raises(ValueError, match="Sample-thickness"):
+        validate_preprocessing_config(config)
+
+
+def test_preprocessing_config_extend_errors_and_path_edge(monkeypatch, tmp_path):
+    child_path = tmp_path / "child.yaml"
+    child_path.write_text("extends: missing.yaml\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="Unknown preprocessing config template"):
+        load_preprocessing_config(child_path)
+
+    monkeypatch.setattr(
+        config_module,
+        "Path",
+        lambda _source: (_ for _ in ()).throw(OSError("bad path")),
+    )
+    assert config_module._looks_like_existing_path("bad") is False

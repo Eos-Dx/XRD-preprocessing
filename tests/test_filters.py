@@ -54,6 +54,86 @@ def test_column_value_filter_between_and_contains():
     assert contains.transform(df)["sample_id"].tolist() == ["b"]
 
 
+@pytest.mark.parametrize(
+    ("op", "expected"),
+    [
+        ("not_in", ["bad"]),
+        ("!=", ["edge", "new", "bad"]),
+        (">", ["new"]),
+        ("<", ["old"]),
+        ("<=", ["old", "edge"]),
+        ("date_after", ["new"]),
+        ("date_before", ["old"]),
+        ("date<=", ["old", "edge"]),
+        ("date_between", ["edge", "new"]),
+        ("date in", ["edge", "new"]),
+        ("isna", ["bad"]),
+        ("notna", ["old", "edge", "new"]),
+    ],
+)
+def test_column_value_filter_branch_ops(op, expected):
+    df = pd.DataFrame(
+        {
+            "sample_id": ["old", "edge", "new", "bad"],
+            "score": [0.2, 0.5, 0.9, np.nan],
+            "measurementDate": ["2026-01-10", "2026-06-01", "2026-06-02", None],
+        }
+    )
+    kwargs = {
+        "not_in": {"values": ["old", "edge", "new"]},
+        "!=": {"value": "old"},
+        ">": {"value": 0.5},
+        "<": {"value": 0.5},
+        "<=": {"value": 0.5},
+        "date_after": {"value": "2026-06-01"},
+        "date_before": {"value": "2026-06-01"},
+        "date<=": {"value": "2026-06-01"},
+        "date_between": {"lower": "2026-06-01", "upper": "2026-06-02"},
+        "date in": {"values": ["2026-06-01", "2026-06-02"]},
+        "isna": {},
+        "notna": {},
+    }[op]
+    column = "score" if op in {">", "<", "<=", "isna", "notna"} else "measurementDate"
+    if op in {"not_in", "!="}:
+        column = "sample_id"
+
+    out = ColumnValueFilter(column, op=op, **kwargs).transform(df)
+
+    assert out["sample_id"].tolist() == expected
+
+
+@pytest.mark.parametrize(
+    ("op", "kwargs", "message"),
+    [
+        ("in", {}, "values must be provided"),
+        ("not_in", {}, "values must be provided"),
+        ("between", {}, "lower and upper"),
+        ("date_between", {}, "lower and upper"),
+        ("date in", {}, "values must be provided"),
+        ("unsupported", {}, "Unsupported"),
+    ],
+)
+def test_column_value_filter_rejects_invalid_ops(op, kwargs, message):
+    df = pd.DataFrame({"value": [1.0]})
+
+    with pytest.raises(ValueError, match=message):
+        ColumnValueFilter("value", op=op, **kwargs).transform(df)
+
+
+def test_column_value_filter_keep_na_and_no_reset_index():
+    df = pd.DataFrame({"value": [1.0, np.nan, 3.0]}, index=[10, 11, 12])
+
+    out = ColumnValueFilter(
+        "value",
+        op=">",
+        value=2.0,
+        keep_na=True,
+        reset_index=False,
+    ).transform(df)
+
+    assert out.index.tolist() == [11, 12]
+
+
 def test_column_value_filter_date_cutoff():
     df = pd.DataFrame(
         {
@@ -223,6 +303,15 @@ def test_patient_specimen_validity_filter_requires_standard_id_columns():
         PatientSpecimenValidityFilter().transform(df)
 
 
+def test_patient_specimen_validity_filter_rejects_invalid_minimums():
+    df = pd.DataFrame({"patientId": ["p1"], "specimenId": ["s1"]})
+
+    with pytest.raises(ValueError, match="min_measurements"):
+        PatientSpecimenValidityFilter(min_measurements_per_specimen=0).transform(df)
+    with pytest.raises(ValueError, match="min_specimens"):
+        PatientSpecimenValidityFilter(min_specimens_per_patient=0).transform(df)
+
+
 def test_specimen_validity_filter_uses_specimen_id_only():
     df = pd.DataFrame(
         {
@@ -262,6 +351,15 @@ def test_specimen_validity_filter_marks_reasons_when_not_dropping():
         "specimen_measurements_below_minimum",
         "missing_specimen_id",
     ]
+
+
+def test_specimen_validity_filter_rejects_missing_column_and_invalid_minimum():
+    with pytest.raises(KeyError, match="specimenId"):
+        SpecimenValidityFilter().transform(pd.DataFrame({"id": ["s1"]}))
+    with pytest.raises(ValueError, match="min_measurements"):
+        SpecimenValidityFilter(min_measurements_per_specimen=0).transform(
+            pd.DataFrame({"specimenId": ["s1"]})
+        )
 
 
 def _fake_poni(distance_m: float = 0.1) -> str:
@@ -373,3 +471,62 @@ def test_radial_profile_value_filter_can_require_nearby_q_point():
 
     assert out.empty
     assert filt.stats_["rows_fail"] == 1
+
+
+def test_radial_profile_value_filter_error_branches():
+    with pytest.raises(KeyError, match="Missing required radial profile"):
+        RadialProfileValueFilter(q_value_nm_inv=14.0, threshold=2.0).transform(
+            pd.DataFrame({"q_range": [[1, 2]]})
+        )
+    with pytest.raises(ValueError, match="same shape"):
+        RadialProfileValueFilter(q_value_nm_inv=14.0, threshold=2.0).transform(
+            pd.DataFrame(
+                {
+                    "q_range": [np.array([1.0, 2.0])],
+                    "radial_profile_data": [np.array([1.0])],
+                }
+            )
+        )
+    with pytest.raises(ValueError, match="Unsupported"):
+        RadialProfileValueFilter(
+            q_value_nm_inv=14.0,
+            threshold=2.0,
+            op="bad",
+        ).transform(
+            pd.DataFrame(
+                {
+                    "q_range": [np.array([14.0])],
+                    "radial_profile_data": [np.array([1.0])],
+                }
+            )
+        )
+
+
+@pytest.mark.parametrize("op", [">=", "<", "<="])
+def test_radial_profile_value_filter_compare_ops(op):
+    q = np.array([14.0])
+    df = pd.DataFrame(
+        {
+            "sample_id": ["row"],
+            "q_range": [q],
+            "radial_profile_data": [np.array([2.0])],
+        }
+    )
+
+    out = RadialProfileValueFilter(q_value_nm_inv=14.0, threshold=2.0, op=op).transform(
+        df
+    )
+
+    assert len(out) == (1 if op in {">=", "<="} else 0)
+
+
+def test_snr_filter_missing_column_and_no_finite_values():
+    with pytest.raises(KeyError, match="snr_db"):
+        SNRFilter().transform(pd.DataFrame({"id": ["a"]}))
+
+    out = SNRFilter(drop=False).transform(
+        pd.DataFrame({"sample_id": ["a"], "snr_db": [np.nan]})
+    )
+
+    assert out["snr_pass"].tolist() == [False]
+    assert np.isnan(SNRFilter(drop=False).fit_transform(out)["snr_db"].iloc[0])
