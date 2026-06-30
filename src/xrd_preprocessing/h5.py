@@ -791,57 +791,6 @@ def _open_container_reader(file_path: Path):
     return open_container(file_path, validate=False)
 
 
-def _detector_catalog(session: h5py.Group) -> dict[int, dict[str, Any]]:
-    out: dict[int, dict[str, Any]] = {}
-    root = session.get("instrument/detector_sets")
-    if root is None:
-        return out
-    for detector_set_name in sorted(root):
-        detector_set = root[detector_set_name]
-        detectors = detector_set.get("detectors")
-        if detectors is None:
-            continue
-        for detector_name in sorted(detectors):
-            det = detectors[detector_name]
-            det_id = int(det.attrs["detector_id"])
-            out[det_id] = {
-                "detector_name": detector_name,
-                "detector_set_name": detector_set_name,
-                **_attrs(det),
-                **_scalar_fields(det),
-            }
-    return out
-
-
-def _measurement_payloads(
-    set_group: h5py.Group,
-    detector_catalog: dict[int, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    measurements = set_group.get("measurements")
-    if measurements is None:
-        return []
-
-    rows = []
-    for name in sorted(measurements):
-        meas = measurements[name]
-        if not isinstance(meas, h5py.Group):
-            continue
-        detector_id = int(meas.attrs.get("detector_id", -1))
-        row = {
-            "measurement_name": name,
-            **_attrs(meas),
-            **detector_catalog.get(detector_id, {}),
-        }
-        data = _dataset(meas, "data")
-        if data is not None:
-            row["detector_data"] = data
-        mask = _dataset(meas, "mask")
-        if mask is not None:
-            row["detector_mask"] = mask
-        rows.append(row)
-    return rows
-
-
 def _resolve_file_path(
     value: str | None,
     *,
@@ -878,31 +827,6 @@ def _first_gfrm_path_from_measurements(
 ) -> Path | None:
     for measurement in measurements:
         source = measurement.get("file_path")
-        if source and str(source).lower().endswith(".gfrm"):
-            resolved = _resolve_file_path(
-                str(source),
-                container_path=container_path,
-                raw_root=raw_root,
-            )
-            if resolved is not None:
-                return resolved
-    return None
-
-
-def _first_gfrm_path(
-    set_group: h5py.Group,
-    *,
-    container_path: Path,
-    raw_root: str | Path | None,
-) -> Path | None:
-    measurements = set_group.get("measurements")
-    if measurements is None:
-        return None
-    for name in sorted(measurements):
-        meas = measurements[name]
-        if not isinstance(meas, h5py.Group):
-            continue
-        source = _decode(meas.attrs.get("file_path"))
         if source and str(source).lower().endswith(".gfrm"):
             resolved = _resolve_file_path(
                 str(source),
@@ -1030,79 +954,6 @@ def _copy_archive_session_to_file(
         src.copy(session, dst, name="session")
         for key, value in session.attrs.items():
             dst.attrs[key] = value
-
-
-def _set_row(
-    file_path: Path,
-    root_attrs: dict[str, Any],
-    session_meta: dict[str, Any],
-    set_name: str,
-    set_group: h5py.Group,
-    detector_catalog: dict[int, dict[str, Any]],
-    data_preference: str,
-    raw_root: str | Path | None,
-    convert_gfrm: bool,
-) -> dict[str, Any]:
-    acq = set_group.get("acquisition")
-    row = {
-        "source_file": str(file_path),
-        "id": set_name,
-        "meas_name": set_name,
-        **root_attrs,
-        **session_meta,
-        **_attrs(set_group),
-    }
-    if acq is not None:
-        row.update(_scalar_fields(acq))
-
-    raw = _dataset(set_group, "raw/data")
-    processed = _dataset(set_group, "processed/data")
-    if data_preference != "gfrm":
-        raise ValueError("Product h5_to_df requires data_preference='gfrm'.")
-    if not convert_gfrm:
-        raise ValueError("Product h5_to_df requires convert_gfrm=True.")
-
-    gfrm_path = _first_gfrm_path(
-        set_group,
-        container_path=file_path,
-        raw_root=raw_root,
-    )
-    if gfrm_path is None:
-        raise FileNotFoundError(
-            f"Missing required RAW GFRM artifact for container set '{set_name}'."
-        )
-    gfrm_data, gfrm_metadata = gfrm_to_photons(gfrm_path)
-
-    row["measurement_data"] = gfrm_data
-    row["measurement_data_source"] = "gfrm_to_photons"
-    row["raw_data"] = raw
-    row["processed_data"] = processed
-    row["gfrm_data"] = gfrm_data
-    row["gfrm_path"] = str(gfrm_path) if gfrm_path is not None else None
-    row["gfrm_conversion_metadata"] = gfrm_metadata
-
-    poni_text = _text_dataset(set_group, "artifacts/poni")
-    if poni_text is not None:
-        row["ponifile"] = poni_text
-
-    if "integration" in set_group:
-        integration = set_group["integration"]
-        if "q" in integration:
-            row["q_range"] = integration["q"][()]
-        if "i" in integration:
-            row["radial_profile_data"] = integration["i"][()]
-        if "sigma" in integration:
-            row["radial_profile_sigma"] = integration["sigma"][()]
-        row.update(_attrs(integration, prefix="integration_"))
-
-    row["metadata"] = _json_dataset(set_group, "metadata", default={})
-    processing = set_group.get("processing")
-    if processing is not None:
-        row["processing_config"] = _json_dataset(processing, "config", default={})
-    else:
-        row["processing_config"] = {}
-    row["detector_measurements"] = _measurement_payloads(set_group, detector_catalog)
-    return row
 
 
 def _standardize_clinical_ids(row: dict[str, Any]) -> None:
@@ -1436,74 +1287,6 @@ def h5_to_df(
     measurement_df.attrs["dropped_missing_sample_thickness"] = drop_stats[
         "missing_sample_thickness"
     ]
-    if require_clinical_ids and not measurement_df.empty:
-        _validate_clinical_ids(measurement_df, frame_name="measurement_df")
-    return calibration_df, measurement_df
-
-
-def _legacy_h5_to_df(
-    file_path: str | Path,
-    *,
-    data_preference: str = "gfrm",
-    raw_root: str | Path | None = None,
-    convert_gfrm: bool = True,
-    require_clinical_ids: bool = True,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Deprecated pre-reader implementation kept for fixture comparison."""
-    file_path = Path(file_path)
-    calibration_rows: list[dict[str, Any]] = []
-    measurement_rows: list[dict[str, Any]] = []
-
-    with h5py.File(file_path, "r") as h5:
-        version = _decode(h5.attrs.get("schema_version"))
-        fmt = _decode(h5.attrs.get("format"))
-        if version != "0.3" or fmt != "xrd-session":
-            raise ValueError(
-                f"Unsupported container format: schema_version={version!r}, format={fmt!r}"
-            )
-
-        root_attrs = _attrs(h5)
-        session = h5["session"]
-        session_meta = _attrs(session)
-        if "sample" in session:
-            session_meta.update(_scalar_fields(session["sample"], prefix="sample_"))
-            session_meta["patientId"] = _text_dataset(session["sample"], "patient_name")
-            session_meta["specimenId"] = _text_dataset(session["sample"], "name")
-        if "instrument" in session:
-            session_meta.update(_attrs(session["instrument"], prefix="instrument_"))
-            session_meta.update(_scalar_fields(session["instrument"]))
-
-        detector_catalog = _detector_catalog(session)
-        sets = session.get("sets")
-        if sets is None:
-            return pd.DataFrame(), pd.DataFrame()
-
-        for set_name in sorted(sets):
-            row = _set_row(
-                file_path,
-                root_attrs,
-                session_meta,
-                set_name,
-                sets[set_name],
-                detector_catalog,
-                data_preference,
-                raw_root,
-                convert_gfrm,
-            )
-            _standardize_clinical_ids(row)
-            category = str(
-                row.get("measurement_type_category")
-                or row.get("category")
-                or ""
-            ).upper()
-            if category == "CALIBRATION":
-                row["cal_name"] = set_name
-                calibration_rows.append(row)
-            else:
-                measurement_rows.append(row)
-
-    calibration_df = pd.DataFrame(calibration_rows)
-    measurement_df = pd.DataFrame(measurement_rows)
     if require_clinical_ids and not measurement_df.empty:
         _validate_clinical_ids(measurement_df, frame_name="measurement_df")
     return calibration_df, measurement_df

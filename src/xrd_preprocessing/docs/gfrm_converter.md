@@ -58,8 +58,6 @@ photons = (adu - 64.0) / 41.5045612244898
 Negative values are preserved. Row `511` is masked as `NaN` by product default
 via `mask_bad_row=True`.
 
-`mask_last_row` is accepted as a compatibility alias for `mask_bad_row`.
-
 FabIO returns decoded detector counts. It does not apply our EOS photon
 normalization convention. The EOS photon image is an estimate based on Bruker
 CCD calibration fields. It is not direct photon-counting detector output.
@@ -154,7 +152,6 @@ gain_adu_per_photon
 shape
 dtype
 mask_bad_row
-mask_last_row
 masked_row_511
 negative_pixel_count
 header

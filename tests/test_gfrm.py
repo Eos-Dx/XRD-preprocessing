@@ -141,7 +141,7 @@ def test_gfrm_metadata_parser_rejects_missing_or_invalid_headers():
 def test_read_gfrm_as_photons_without_save(monkeypatch):
     monkeypatch.setattr(
         "xrd_preprocessing.gfrm.gfrm_to_photons",
-        lambda path, mask_last_row=True: (np.ones((2, 2)), {"path": str(path)}),
+        lambda path, mask_bad_row=True: (np.ones((2, 2)), {"path": str(path)}),
     )
 
     photons, npy_path, metadata = read_gfrm_as_photons("fake.gfrm", save=False)

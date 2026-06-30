@@ -151,7 +151,7 @@ def test_column_value_filter_date_cutoff():
     assert out["sample_id"].tolist() == ["edge", "new"]
 
 
-def test_metadata_filter_is_one_column_alias():
+def test_metadata_filter_uses_one_column_rule():
     df = pd.DataFrame(
         {
             "sample_id": ["a", "b", "c"],
@@ -199,7 +199,7 @@ def test_multiple_column_filters_are_composed_as_pipeline():
     assert out["sample_id"].tolist() == ["a", "b"]
 
 
-def test_patient_filter_is_metadata_filter_alias():
+def test_patient_filter_uses_metadata_rule():
     df = pd.DataFrame(
         {
             "sample_id": ["a", "b"],

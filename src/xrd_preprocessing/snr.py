@@ -121,7 +121,7 @@ class SNRTransformer(TransformerMixin, BaseEstimator):
             raise ValueError("snr_method must be 'poisson'.")
 
     def fit(self, X: pd.DataFrame, y=None):
-        """No-op fit method for scikit-learn pipeline compatibility."""
+        """No-op fit method required by the scikit-learn pipeline API."""
         _ = X
         _ = y
         return self

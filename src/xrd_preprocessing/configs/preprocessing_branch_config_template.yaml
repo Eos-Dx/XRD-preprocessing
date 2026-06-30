@@ -61,9 +61,8 @@ metadata:
 
 # H5-level filters run before detector arrays are loaded.
 # `quality_exclusions` is the preferred product QC contract: exclude bad
-# session IDs first, and use dates only as a fallback when the session-link
-# column is absent in an older H5 container.
-# `accepted_dates` is kept only for legacy configs.
+# session IDs first, and use dates only as an explicit fallback when the
+# session-link column is absent.
 # `measurement_positions` keeps only canonical product measurement points.
 # `require_biopsy` is optional product metadata filtering for biopsy-only
 # cohorts; concrete product code decides whether to use it at H5 level.
@@ -79,7 +78,6 @@ filters:
       column: started_at
       excluded_dates: []
       use_when_primary_key_missing: true
-  accepted_dates: []
   measurement_positions:
     - P1
     - P2

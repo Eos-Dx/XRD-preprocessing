@@ -46,7 +46,7 @@ notna
 
 ## Metadata / Patient Filter
 
-`MetadataFilter` and `PatientFilter` are aliases of `ColumnValueFilter`.
+`MetadataFilter` and `PatientFilter` apply one explicit column rule.
 
 They do not have default columns or default values.
 
@@ -200,8 +200,7 @@ the integration geometry can disagree.
 
 Use `SNRFilter` after `SNRTransformer`.
 
-`SNRFilter` is the SNR-specific alias/wrapper around the same column-value
-filter idea.
+`SNRFilter` applies the same column-value rule to scalar SNR in dB.
 
 Default:
 

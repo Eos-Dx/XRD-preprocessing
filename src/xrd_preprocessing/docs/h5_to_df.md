@@ -55,7 +55,7 @@ calibration_df, measurement_df = h5_to_df(
     data_preference="gfrm",
     drop_missing_sample_thickness=True,
     h5_filters=[
-        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter("session_uid", op="not_in", values=excluded_session_ids),
         H5SessionFilter("specimen_status", op="in", values=["BENIGN", "CANCER"]),
         H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
         H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
@@ -87,7 +87,7 @@ Transformer manifest API for product pipelines:
 ```python
 selector = H5SessionSelectorTransformer(
     filters=[
-        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter("session_uid", op="not_in", values=excluded_session_ids),
         H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
         H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
     ],

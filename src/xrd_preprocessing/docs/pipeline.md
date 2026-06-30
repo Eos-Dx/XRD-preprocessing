@@ -36,8 +36,8 @@ Product routes should be composed from sklearn-style transformers.
 input object -> transformer.fit_transform(input object) -> output object
 ```
 
-Use direct functions such as `h5_to_df` only for low-level debugging or backward
-compatibility. Product notebooks and scripts should prefer:
+Use direct functions such as `h5_to_df` only for low-level debugging. Product
+notebooks and scripts should prefer:
 
 ```python
 from xrd_preprocessing import (

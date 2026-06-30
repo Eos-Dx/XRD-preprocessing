@@ -136,7 +136,7 @@ class ColumnValueFilter(TransformerMixin, BaseEstimator):
 
 
 class MetadataFilter(ColumnValueFilter):
-    """ColumnValueFilter alias for metadata columns."""
+    """Column-value filter for metadata columns."""
 
     def __init__(
         self,
@@ -168,7 +168,7 @@ class MetadataFilter(ColumnValueFilter):
 
 
 class PatientFilter(MetadataFilter):
-    """MetadataFilter alias for patient/sample selection stages."""
+    """Metadata filter for patient/sample selection stages."""
 
 
 class SpecimenValidityFilter(TransformerMixin, BaseEstimator):
@@ -663,7 +663,7 @@ class RadialProfileValueFilter(TransformerMixin, BaseEstimator):
 
 
 class SNRFilter(ColumnValueFilter):
-    """ColumnValueFilter alias for scalar SNR in dB."""
+    """Column-value filter for scalar SNR in dB."""
 
     def __init__(
         self,

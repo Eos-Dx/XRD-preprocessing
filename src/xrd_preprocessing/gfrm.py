@@ -245,7 +245,6 @@ def gfrm_to_photons(
     gfrm_path: str | Path,
     *,
     mask_bad_row: bool = True,
-    mask_last_row: bool | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Convert Bruker .gfrm to EOS-normalized estimated photons.
 
@@ -261,8 +260,6 @@ def gfrm_to_photons(
     not direct photon-counting detector events.
     """
     gfrm_path = Path(gfrm_path)
-    if mask_last_row is not None:
-        mask_bad_row = mask_last_row
 
     adu, header = decode_gfrm(gfrm_path)
     conversion_metadata = _parse_eos_photon_metadata(header, gfrm_path)
@@ -288,7 +285,6 @@ def gfrm_to_photons(
         "NOVERFL": header.get("NOVERFL"),
         "LINEAR": header.get("LINEAR"),
         "mask_bad_row": bool(mask_bad_row),
-        "mask_last_row": bool(mask_bad_row),
         "masked_row_511": masked_row_511,
         "negative_pixel_count": negative_pixel_count,
         "header": header,
@@ -300,7 +296,7 @@ def save_gfrm_as_npy(
     gfrm_path: str | Path,
     npy_path: str | Path | None = None,
     *,
-    mask_last_row: bool = True,
+    mask_bad_row: bool = True,
 ) -> tuple[np.ndarray, Path, dict[str, Any]]:
     """Convert GFRM to photons and save the resulting NumPy array."""
     gfrm_path = Path(gfrm_path)
@@ -310,7 +306,7 @@ def save_gfrm_as_npy(
 
     photons, metadata = gfrm_to_photons(
         gfrm_path,
-        mask_last_row=mask_last_row,
+        mask_bad_row=mask_bad_row,
     )
     np.save(npy_path, photons)
     metadata = {**metadata, "npy_path": str(npy_path)}
@@ -322,17 +318,17 @@ def read_gfrm_as_photons(
     *,
     save: bool = True,
     npy_path: str | Path | None = None,
-    mask_last_row: bool = True,
+    mask_bad_row: bool = True,
 ) -> tuple[np.ndarray, Path | None, dict[str, Any]]:
     """Read GFRM as photons, optionally materializing ``*_photons.npy``."""
     if save:
         return save_gfrm_as_npy(
             gfrm_path,
             npy_path=npy_path,
-            mask_last_row=mask_last_row,
+            mask_bad_row=mask_bad_row,
         )
     photons, metadata = gfrm_to_photons(
         gfrm_path,
-        mask_last_row=mask_last_row,
+        mask_bad_row=mask_bad_row,
     )
     return photons, None, metadata
