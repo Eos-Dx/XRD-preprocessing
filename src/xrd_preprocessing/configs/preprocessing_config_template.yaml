@@ -7,7 +7,13 @@ preprocessing:
 
 xrd_preprocessing:
   version: local
-  release_tag: v0.1.3-beta
+  release_tag: v0.1.4-beta
+
+# Product wrappers should read input and output paths from config.
+# Relative paths are resolved by the product package against this YAML file.
+io:
+  input_h5_path: ""
+  output_joblib_path: ""
 
 # Raw detector source. GFRM is the preferred product source when vendor bytes
 # are available. NPY/TIFF are explicit alternatives for synthetic tests or
@@ -32,12 +38,29 @@ raw_data:
 
 metadata:
   keep: all
+  # If true, product pipeline may drop heavy payload columns before writing
+  # joblib. Use keep_payload_columns for specific debug columns that should
+  # survive final output, e.g. radial_profile_data_raw or radial_profile_sigma.
   drop_payload_columns: true
+  keep_payload_columns: []
 
 # H5-level filters run before detector arrays are loaded.
-# Accepted dates are product-owned, usually exported from calibration QC.
+# `quality_exclusions` is the preferred product QC contract: exclude bad
+# session IDs first, and use dates only as a fallback when the session-link
+# column is absent in an older H5 container.
+# `accepted_dates` is kept only for legacy configs.
 # P1/P2/P3 are the canonical measurement positions for current Aramis data.
 filters:
+  quality_exclusions:
+    enabled: false
+    reason_doc: ""
+    primary_key:
+      column: linked_agbh_session_uid
+      excluded_values: []
+    fallback_date:
+      column: started_at
+      excluded_dates: []
+      use_when_primary_key_missing: true
   accepted_dates: []
   measurement_positions:
     - P1
@@ -122,6 +145,7 @@ normalization:
   mode: value
   statistic: median
   q_range_nm_inv: [6.7, 7.1]
+  # true keeps the pre-normalization profile in radial_profile_data_raw.
   save_initial_data: false
 
 # Optional post-normalization profile gate.

@@ -91,6 +91,21 @@ keeps multiple branches in one file. Use
 concrete YAML per product branch with branch-specific rules under
 `branch_settings`.
 
+Optional product cohort fields such as `filters.require_biopsy` and
+`filters.biopsy_column` belong in the concrete product YAML. Product code may
+apply them through H5 filters before detector arrays are loaded.
+
+Product wrappers should also use the YAML `io` block:
+
+```text
+io.input_h5_path
+io.output_joblib_path
+```
+
+These paths let a product command run from a single config file, for example
+`python -m aramis preprocess --config ...`. Relative paths are resolved by the
+product package that owns the concrete YAML.
+
 Product repositories should keep their concrete configs in the product repo,
 then load and validate them with:
 
@@ -155,7 +170,16 @@ from xrd_preprocessing import (
 
 selector = H5SessionSelectorTransformer(
     filters=[
-        H5SessionFilter("started_at", op="date in", values=accepted_dates),
+        H5SessionFilter(
+            "linked_agbh_session_uid",
+            op="not in",
+            values=rejected_session_ids,
+            fallback={
+                "column": "started_at",
+                "op": "date not in",
+                "values": rejected_dates,
+            },
+        ),
         H5SessionFilter("poni_q_max_nm_inv", op=">=", value=23.0),
         H5SessionFilter("h5_sample_all_sets_have_thickness", op="==", value=True),
     ],

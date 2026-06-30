@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import pytest
+import pandas as pd
 
 from xrd_preprocessing import (
     DEFAULT_PREPROCESSING_CONFIG,
+    H5SessionFilter,
     available_preprocessing_configs,
+    filter_h5_session_df,
     load_preprocessing_config,
     preprocessing_config_path,
     validate_preprocessing_config,
@@ -18,9 +21,10 @@ def test_bundled_preprocessing_template_contract():
 
     config = load_preprocessing_config()
 
-    assert config["xrd_preprocessing"]["release_tag"] == "v0.1.3-beta"
+    assert config["xrd_preprocessing"]["release_tag"] == "v0.1.4-beta"
     assert config["preprocessing"]["version"] == "0.1-template"
     assert config["raw_data"]["source"] == "gfrm"
+    assert "io" in config
     assert config["raw_data"]["allowed_sources"] == ["gfrm", "npy", "tiff"]
     assert config["integration"]["npt"] == 100
     assert config["snr"]["min_snr_db"] == 18.0
@@ -44,6 +48,9 @@ def test_bundled_branch_preprocessing_template_contract():
     assert "branch_settings" in config
     assert "one_to_one" not in config
     assert "one_to_many" not in config
+    assert config["filters"]["require_biopsy"] is False
+    assert config["filters"]["biopsy_column"] == "biopsy"
+    assert "quality_exclusions" in config["filters"]
     assert config["integration"]["npt"] == 100
     assert config["integration"]["thickness_correction"][
         "calibrant_thickness_column"
@@ -70,3 +77,50 @@ def test_preprocessing_config_validation_accepts_branch_specific_contract():
     }
 
     validate_preprocessing_config(config)
+
+
+def test_preprocessing_config_can_extend_bundled_template():
+    config = load_preprocessing_config(
+        {
+            "extends": "preprocessing_branch_config_template.yaml",
+            "aramis_preprocessing": {
+                "branch": "one_to_many",
+                "decision_unit": "specimenId",
+            },
+            "filters": {"require_biopsy": True},
+            "branch_settings": {
+                "specimen_status_keep": ["BENIGN", "CANCER"],
+                "min_measurements_per_specimen_after_snr": 1,
+            },
+        }
+    )
+
+    assert config["aramis_preprocessing"]["branch"] == "one_to_many"
+    assert config["filters"]["require_biopsy"] is True
+    assert config["raw_data"]["source"] == "gfrm"
+    assert config["integration"]["npt"] == 100
+
+
+def test_h5_session_filter_uses_fallback_when_primary_column_is_missing():
+    frame = pd.DataFrame(
+        {
+            "started_at": ["2026-03-16T09:00:00", "2026-03-17T09:00:00"],
+            "category": ["SAMPLE", "SAMPLE"],
+        }
+    )
+    filters = [
+        H5SessionFilter(
+            column="linked_agbh_session_uid",
+            op="not in",
+            values=["bad-session"],
+            fallback={
+                "column": "started_at",
+                "op": "date not in",
+                "values": ["2026-03-16"],
+            },
+        )
+    ]
+
+    filtered = filter_h5_session_df(frame, filters=filters, session_category="SAMPLE")
+
+    assert filtered["started_at"].tolist() == ["2026-03-17T09:00:00"]

@@ -49,7 +49,7 @@ product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
 Transformer contract:
 
 ```text
-v0.1.3-beta product movement should be expressed as transformers
+v0.1.4-beta product movement should be expressed as transformers
 every DataFrame-changing product step should support fit_transform
 H5SessionSelectorTransformer returns a manifest with archive_path, all_session_df, selected session_df, and h5_filters
 H5MeasurementSetAuditTransformer adds stage count DataFrames without loading detector arrays
@@ -96,7 +96,7 @@ H5-level filtering rule:
 If a filter can be computed from H5 attrs/metadata/PONI without loading frames,
 apply it through H5SessionFilter before h5_to_df.
 Examples: started_at, specimen_status, patientId/specimenId, side,
-poni_q_max_nm_inv, h5_sample_all_sets_have_thickness.
+poni_q_max_nm_inv, biopsy, h5_sample_all_sets_have_thickness.
 ```
 
 Open product-development questions:

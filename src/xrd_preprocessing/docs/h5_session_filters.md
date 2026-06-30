@@ -232,6 +232,25 @@ h5_filters = [
 `date in` and `date not in` compare calendar dates. H5 timestamps with time,
 for example `2026-01-02 10:00:00`, match user dates like `2026-01-02`.
 
+Fallback filter example for product QC:
+
+```python
+H5SessionFilter(
+    column="linked_agbh_session_uid",
+    op="not in",
+    values=rejected_session_ids,
+    fallback={
+        "column": "started_at",
+        "op": "date not in",
+        "values": rejected_dates,
+    },
+)
+```
+
+The fallback is used only when the primary column is absent from the H5 session
+metadata table. Prefer session ID exclusions when the session-link column exists;
+one calendar date can contain multiple calibration sessions.
+
 If a collaborator provides selected batches, encode them as metadata, not as
 free-text notes. Example:
 

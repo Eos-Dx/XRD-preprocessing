@@ -54,6 +54,7 @@ def load_preprocessing_config(source: str | Path | dict[str, Any] | None = None)
         if not resource.is_file():
             raise FileNotFoundError(f"Preprocessing config not found: {source}")
         config = yaml.safe_load(resource.read_text(encoding="utf-8"))
+    config = _resolve_extends(config)
     validate_preprocessing_config(config)
     return config
 
@@ -111,3 +112,25 @@ def _looks_like_existing_path(source: str | Path) -> bool:
         return Path(source).exists()
     except (OSError, TypeError, ValueError):
         return False
+
+
+def _resolve_extends(config: dict[str, Any]) -> dict[str, Any]:
+    base_name = config.get("extends")
+    if base_name is None:
+        return config
+    resource = files(PREPROCESSING_CONFIG_PACKAGE).joinpath(str(base_name))
+    if not resource.is_file():
+        raise FileNotFoundError(f"Unknown preprocessing config template: {base_name}")
+    base = yaml.safe_load(resource.read_text(encoding="utf-8"))
+    merged = _deep_merge(base, {k: v for k, v in config.items() if k != "extends"})
+    return merged
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged

@@ -46,6 +46,7 @@ class H5SessionFilter:
     values: Sequence[Any] | set[Any] | None = None
     lower: Any = None
     upper: Any = None
+    fallback: Any = None
 
 
 def calibrant_thickness_h5_filters(
@@ -193,6 +194,8 @@ def _date_values(values: Sequence[Any]) -> set[Any]:
 
 def _filter_mask(df: pd.DataFrame, filter_spec: H5SessionFilter) -> pd.Series:
     if filter_spec.column not in df.columns:
+        if filter_spec.fallback is not None:
+            return _filter_mask(df, _coerce_filter(filter_spec.fallback))
         raise ValueError(f"H5 session metadata is missing column {filter_spec.column!r}.")
 
     series = df[filter_spec.column]
