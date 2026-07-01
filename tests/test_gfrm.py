@@ -12,6 +12,7 @@ from xrd_preprocessing import (
     decode_gfrm,
     extract_gfrm_archive,
     gfrm_conversion_metadata,
+    gfrm_photon_statistics,
     gfrm_to_photons,
     parse_bruker_header_preview,
     parse_gfrm_header,
@@ -64,7 +65,8 @@ def test_extract_gfrm_archive_and_convert_water_20mm(tmp_path):
     assert np.isnan(photons[511]).all()
     assert int(np.sum(photons < 0)) == 1596
     assert int(np.sum(photons == 0)) == 636
-    assert conversion["negative_pixel_count"] == 1596
+    stats = gfrm_photon_statistics(photons, conversion)
+    assert stats["negative_pixel_count"] == 1596
     assert conversion["fabio_class"] == "Bruker100Image"
     assert conversion["NEXP_raw"] == header["NEXP"]
     assert conversion["CCDPARM_raw"] == header["CCDPARM"]
@@ -101,20 +103,19 @@ def test_gfrm_validation_rejects_invalid_arrays():
         validate_gfrm_array(np.array([["x"]], dtype=object), metadata, "bad.gfrm")
 
 
-def test_gfrm_validation_reports_shape_warnings():
-    transposed = validate_gfrm_array(
-        np.ones((3, 2)),
-        {"nrows": 2, "ncols": 3},
-        "frame.gfrm",
-    )
-    mismatch = validate_gfrm_array(
-        np.ones((4, 4)),
-        {"nrows": 2, "ncols": 3},
-        "frame.gfrm",
-    )
-
-    assert "transposed" in transposed[0]
-    assert "does not match" in mismatch[0]
+def test_gfrm_validation_rejects_shape_mismatch():
+    with pytest.raises(ValueError, match="transposed"):
+        validate_gfrm_array(
+            np.ones((3, 2)),
+            {"nrows": 2, "ncols": 3},
+            "frame.gfrm",
+        )
+    with pytest.raises(ValueError, match="does not match"):
+        validate_gfrm_array(
+            np.ones((4, 4)),
+            {"nrows": 2, "ncols": 3},
+            "frame.gfrm",
+        )
 
 
 def test_gfrm_metadata_parser_rejects_missing_or_invalid_headers():
@@ -138,13 +139,13 @@ def test_gfrm_metadata_parser_rejects_missing_or_invalid_headers():
         )
 
 
-def test_read_gfrm_as_photons_without_save(monkeypatch):
+def test_read_gfrm_as_photons_default_does_not_save(monkeypatch):
     monkeypatch.setattr(
         "xrd_preprocessing.gfrm.gfrm_to_photons",
         lambda path, mask_bad_row=True: (np.ones((2, 2)), {"path": str(path)}),
     )
 
-    photons, npy_path, metadata = read_gfrm_as_photons("fake.gfrm", save=False)
+    photons, npy_path, metadata = read_gfrm_as_photons("fake.gfrm")
 
     assert npy_path is None
     assert photons.shape == (2, 2)
@@ -213,14 +214,22 @@ def test_save_and_read_gfrm_as_photons(tmp_path):
     target = tmp_path / "water.npy"
 
     saved, saved_path, saved_metadata = save_gfrm_as_npy(gfrm_path, target)
-    read, read_path, read_metadata = read_gfrm_as_photons(gfrm_path, npy_path=target)
+    read, read_path, read_metadata = read_gfrm_as_photons(gfrm_path)
+    saved_again, saved_again_path, saved_again_metadata = read_gfrm_as_photons(
+        gfrm_path,
+        save=True,
+        npy_path=target,
+    )
 
     assert saved_path == target
-    assert read_path == target
+    assert read_path is None
+    assert saved_again_path == target
     assert saved_metadata["npy_path"] == str(target)
-    assert read_metadata["npy_path"] == str(target)
+    assert "npy_path" not in read_metadata
+    assert saved_again_metadata["npy_path"] == str(target)
     np.testing.assert_allclose(saved, np.load(target), rtol=0, atol=0, equal_nan=True)
     np.testing.assert_allclose(read, np.load(target), rtol=0, atol=0, equal_nan=True)
+    np.testing.assert_allclose(saved_again, np.load(target), rtol=0, atol=0, equal_nan=True)
 
 
 def test_convert_gfrm_to_npy_cli_helpers(tmp_path):

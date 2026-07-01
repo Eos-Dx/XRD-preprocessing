@@ -85,6 +85,12 @@ Output columns:
 
 ```text
 radial_profile_data            normalized intensity
+```
+
+Metadata columns are optional and off by default. Enable them with
+`add_metadata_columns=True`:
+
+```text
 q_range_normalization_area     area used as denominator
 q_range_normalization_value    value statistic used as denominator
 q_range_normalization_statistic
@@ -99,6 +105,7 @@ Parameter defaults:
 ```text
 output_column = None      means overwrite radial_profile_data
 save_initial_data = False
+add_metadata_columns = False
 initial_column = radial_profile_data_raw
 ```
 

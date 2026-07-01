@@ -1,17 +1,11 @@
 # H5 To DataFrame
 
-`h5_to_df` reads selected Eos-Dx container v0.3 sessions into DataFrames.
+`H5ContainerReader` reads selected Eos-Dx container v0.3 sessions into
+DataFrames. `h5_to_df` is a compatibility wrapper around this reader.
 
-It uses the maintained `eosdx-container` reader:
-
-```python
-from container import open_container
-```
-
-Standalone `xrd-session` files are opened directly. Combined
-`xrd-session-archive` files are handled by scanning session attrs first,
-copying each selected grafted session group to a temporary standalone session
-file, then using the same reader.
+Standalone `xrd-session` files and combined `xrd-session-archive` files are
+opened directly with `h5py`. Archive sessions are not copied to temporary
+standalone files.
 
 Product rule for original GFRM mode:
 
@@ -33,6 +27,7 @@ raw_file contains original vendor GFRM bytes
 
 ```python
 from xrd_preprocessing import (
+    H5ContainerReader,
     H5MeasurementSetAuditTransformer,
     H5SessionFilter,
     H5SessionSelectorTransformer,
@@ -41,16 +36,17 @@ from xrd_preprocessing import (
     h5_to_df,
 )
 
-calibration_df, measurement_df = h5_to_df(
+reader = H5ContainerReader(
     "session.nxs.h5",
     raw_root="path/to/raw-gfrm-artifacts",
 )
+calibration_df, measurement_df = reader.read()
 ```
 
 For a combined archive with product/user supplied H5 filters:
 
 ```python
-calibration_df, measurement_df = h5_to_df(
+reader = H5ContainerReader(
     "data/product-aramis-data/combined_archive.h5",
     data_preference="gfrm",
     drop_missing_sample_thickness=True,
@@ -64,6 +60,24 @@ calibration_df, measurement_df = h5_to_df(
     set_category="SAMPLE",
     max_sessions=10,
 )
+session_df = reader.read_to_session_df()
+measurement_df = reader.read_to_measurement_df()
+```
+
+Compatibility API:
+
+```python
+calibration_df, measurement_df = h5_to_df("session.nxs.h5", data_preference="gfrm")
+```
+
+Reader methods:
+
+```text
+read_to_session_df()          session metadata only; no detector frames
+read_to_measurement_set_df()  measurement-set metadata only; no detector frames
+read_to_calibration_df()      calibration rows only
+read_to_measurement_df()      non-calibration measurement rows only
+read()                        (calibration_df, measurement_df)
 ```
 
 To inspect archive metadata without loading detector arrays:

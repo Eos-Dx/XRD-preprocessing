@@ -151,8 +151,8 @@ snr_linear = sqrt(mean(snr_q^2))
 snr_db = 20 * log10(snr_linear)
 ```
 
-Without `error_model="poisson"`, `radial_profile_sigma` can be missing and SNR
-will be marked as `poisson_missing_sigma`.
+Without `error_model="poisson"`, `radial_profile_sigma` can be missing and
+`SNRTransformer` raises an error.
 
 The sigma is calculated along the integrated q profile because SNR is applied
 after azimuthal integration, not on the raw 2D detector image.
@@ -268,19 +268,13 @@ If `thickness_reference_column` is set, that column must exist and contain a
 finite numeric value for every row. The transformer does not silently fall back
 to a constant reference thickness.
 
-Sequence mode is also supported when the caller has thickness arrays outside
-the DataFrame:
+No silent thickness overrides:
 
-```python
-AzimuthalIntegration(
-    calibration_mode="poni",
-    sample_thickness_mm=[25.0, 10.0],
-    thickness_reference_mm=[40.0, 10.0],
-)
+```text
+sample thickness must come from the input DataFrame column
+row-specific reference thickness must come from the input DataFrame column
+constructor list/sequence thickness overrides are not supported
 ```
-
-Both sequences must be one-dimensional, finite, numeric, and exactly as long as
-the input DataFrame.
 
 If `sample_thickness_mm`, constant `thickness_reference_mm`, or configured
 `thickness_reference_column` is missing, product azimuthal integration raises

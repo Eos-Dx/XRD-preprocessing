@@ -26,10 +26,18 @@ def _():
     if src_path.exists() and str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
 
-    from xrd_preprocessing.faulty_pixels import FaultyPixelDetector, create_mask
-    from xrd_preprocessing.gfrm import extract_gfrm_archive, gfrm_to_photons
+    from xrd_preprocessing.faulty_pixels import (
+        FaultyPixelDetector,
+        create_mask,
+        faulty_pixel_statistics,
+    )
+    from xrd_preprocessing.gfrm import (
+        extract_gfrm_archive,
+        gfrm_photon_statistics,
+        gfrm_to_photons,
+    )
 
-    return FaultyPixelDetector, Path, create_mask, extract_gfrm_archive, gfrm_to_photons, mo, mpatches, np, pd, plt, repo_root
+    return FaultyPixelDetector, Path, create_mask, extract_gfrm_archive, faulty_pixel_statistics, gfrm_photon_statistics, gfrm_to_photons, mo, mpatches, np, pd, plt, repo_root
 
 
 @app.cell
@@ -48,7 +56,7 @@ def _(mo):
 
 
 @app.cell
-def _(Path, extract_gfrm_archive, gfrm_to_photons, np, pd, repo_root):
+def _(Path, extract_gfrm_archive, gfrm_photon_statistics, gfrm_to_photons, np, pd, repo_root):
     real_base = repo_root / "examples" / "data"
     gfrm_archive_path = real_base / "gfrm_measurements.tar.gz"
     extracted_gfrm_root = real_base / "_gfrm_measurements"
@@ -85,6 +93,7 @@ def _(Path, extract_gfrm_archive, gfrm_to_photons, np, pd, repo_root):
     rows = []
     for _gfrm_path in water_gfrm_paths:
         _image, _metadata = gfrm_to_photons(_gfrm_path)
+        _gfrm_stats = gfrm_photon_statistics(_image, _metadata)
         _has_baseline = _gfrm_path.name == "20260608_112438_Water_20mm_Main.gfrm"
         rows.append(
             {
@@ -100,7 +109,7 @@ def _(Path, extract_gfrm_archive, gfrm_to_photons, np, pd, repo_root):
                 "gfrm_path": str(_metadata["source_path"]),
                 "baseline_adu": _metadata["baseline_adu"],
                 "gain_adu_per_photon": _metadata["gain_adu_per_photon"],
-                "negative_pixel_count": _metadata["negative_pixel_count"],
+                "negative_pixel_count": _gfrm_stats["negative_pixel_count"],
             }
         )
 
@@ -385,13 +394,14 @@ def _(
 
 
 @app.cell
-def _(detector, mo):
+def _(detected_df, faulty_pixel_statistics, mo):
+    _stats = faulty_pixel_statistics(detected_df)
     mo.md(
         f"""
         Detector stats:
 
         ```python
-        {detector.stats_}
+        {_stats}
         ```
 
         The left heatmaps show the original detector images with known or

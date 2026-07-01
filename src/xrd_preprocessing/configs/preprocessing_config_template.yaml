@@ -7,7 +7,7 @@ preprocessing:
 
 xrd_preprocessing:
   version: local
-  release_tag: v0.1.5-beta
+  release_tag: v0.1.6-beta
 
 # Product wrappers should read input and output paths from config.
 # Relative paths are resolved by the product package against this YAML file.

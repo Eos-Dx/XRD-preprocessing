@@ -127,11 +127,16 @@ def test_h5_small_helpers_and_filter_errors(tmp_path):
         ("endswith", {"value": "2"}, [False, True, False]),
         ("isna", {}, [False, False, True]),
         ("notna", {}, [True, True, False]),
+        ("not in", {"values": ["Nova_1"]}, [False, True, True]),
         (">", {"value": 1}, [False, True, False]),
+        ("<", {"value": 2}, [True, False, False]),
         ("<=", {"value": 2}, [True, True, False]),
         ("between", {"value": [1, 2]}, [True, True, False]),
+        ("between", {"lower": 1, "upper": 2}, [True, True, False]),
         ("date>", {"value": "2026-01-01"}, [False, True, False]),
+        ("date<", {"value": "2026-01-02"}, [True, False, False]),
         ("date<=", {"value": "2026-01-01"}, [True, False, False]),
+        ("date not in", {"values": ["2026-01-01"]}, [False, True, True]),
         ("date_between", {"lower": "2026-01-01", "upper": "2026-01-02"}, [True, True, False]),
     ],
 )
@@ -143,7 +148,13 @@ def test_h5_filter_mask_ops(op, kwargs, expected):
             "day": ["2026-01-01", "2026-01-02", "bad"],
         }
     )
-    column = "day" if op.startswith("date") else "number" if op in {">", "<=", "between"} else "name"
+    column = (
+        "day"
+        if op.startswith("date")
+        else "number"
+        if op in {">", "<", "<=", "between"}
+        else "name"
+    )
 
     mask = h5_module._filter_mask(frame, H5SessionFilter(column, op=op, **kwargs))
 
@@ -168,6 +179,19 @@ def test_h5_filter_mask_invalid_date_and_missing_column():
     with pytest.raises(ValueError, match="missing column"):
         h5_module._filter_mask(frame, H5SessionFilter("missing", op="==", value=1))
 
+    assert h5_module._filter_mask(
+        frame,
+        H5SessionFilter(
+            "missing",
+            op="==",
+            value="ok",
+            fallback=H5SessionFilter("day", op="==", value="2026-01-01"),
+        ),
+    ).tolist() == [True]
+
+    with pytest.raises(ValueError, match="Unsupported H5 session filter op"):
+        h5_module._filter_mask(frame, H5SessionFilter("day", op="bad"))
+
     assert h5_module._row_matches_filters({"day": "2026-01-01"}, None) is True
     assert (
         h5_module._row_matches_filters(
@@ -176,6 +200,29 @@ def test_h5_filter_mask_invalid_date_and_missing_column():
         )
         is False
     )
+
+
+def test_h5_measurement_set_counts_and_filter_statistics():
+    before = pd.DataFrame(
+        {
+            "patientId": ["P1", "P1", "P2"],
+            "specimenId": ["P1_L", "P1_R", "P2_L"],
+            "specimen_status": ["BENIGN", "CANCER", ""],
+        }
+    )
+    after = before.iloc[:2].copy()
+
+    counts = h5_module.h5_measurement_set_counts(before)
+    stats = h5_module.h5_filter_statistics(before, after)
+
+    assert counts["measurements"] == 3
+    assert counts["patients"] == 2
+    assert counts["specimens"] == 3
+    assert counts["diagnosis_counts"] == {"BENIGN": 1, "CANCER": 1, "NA": 1}
+    assert stats["before"]["measurements"] == 3
+    assert stats["after"]["measurements"] == 2
+    assert stats["dropped"]["measurements"] == 1
+    assert stats["dropped"]["patients"] == 1
 
 
 def test_h5_file_resolution_and_dataset_helpers(tmp_path):

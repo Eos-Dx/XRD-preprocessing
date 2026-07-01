@@ -100,6 +100,23 @@ def detect_faulty_pixels(image: np.ndarray, **kwargs) -> set[Pixel]:
     return FaultyPixelDetector(**kwargs).detect(image)
 
 
+def faulty_pixel_statistics(
+    df: pd.DataFrame,
+    *,
+    mask_column: str = "faulty_pixel_mask",
+) -> dict[str, object]:
+    """Return faulty-pixel audit statistics without mutating the DataFrame."""
+    if mask_column not in df.columns:
+        raise KeyError(f"Column '{mask_column}' not found in DataFrame.")
+    counts = [int(len(mask)) for mask in df[mask_column]]
+    return {
+        "mask_column": mask_column,
+        "n_images": int(len(df)),
+        "faulty_pixels_per_row": counts,
+        "total_faulty_pixels": int(sum(counts)),
+    }
+
+
 class FaultyPixelDetector(TransformerMixin, BaseEstimator):
     """Frame-local detector for GFRM preprocessing.
 
@@ -115,8 +132,9 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
         detect_negative_pixels: bool = True,
         detect_bright_pixels: bool = True,
         bright_pixel_min_value: float = 500.0,
-        exclude_beam_center_radius: float | None = 0.04,
+        exclude_beam_center_radius: float | None = None,
         poni_column: str = "ponifile",
+        mask_column: str = "faulty_pixel_mask",
     ):
         self.image_column = image_column
         self.negative_threshold = float(negative_threshold)
@@ -125,6 +143,7 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
         self.bright_pixel_min_value = float(bright_pixel_min_value)
         self.exclude_beam_center_radius = exclude_beam_center_radius
         self.poni_column = poni_column
+        self.mask_column = mask_column
 
     def fit(self, df: pd.DataFrame, y=None):
         _ = df
@@ -170,7 +189,9 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
-        image_column = _find_image_column(out, self.image_column)
+        if self.image_column not in out.columns:
+            raise KeyError(f"Column '{self.image_column}' not found in DataFrame.")
+        image_column = self.image_column
 
         faulty_masks: list[np.ndarray] = []
 
@@ -194,29 +215,5 @@ class FaultyPixelDetector(TransformerMixin, BaseEstimator):
             faulty_mask = _pixel_array(faulty)
             faulty_masks.append(faulty_mask)
 
-        out["faulty_pixel_mask"] = faulty_masks
-
-        self.stats_ = {
-            "image_column": image_column,
-            "n_images": int(len(out)),
-            "faulty_pixels_per_row": [int(len(mask)) for mask in faulty_masks],
-            "total_faulty_pixels": int(sum(len(mask) for mask in faulty_masks)),
-            "detect_negative_pixels": self.detect_negative_pixels,
-            "detect_bright_pixels": self.detect_bright_pixels,
-            "faulty_pixel_rule": (
-                f"finite and >= {self.negative_threshold:g} "
-                f"and > {self.bright_pixel_min_value:g}"
-            ),
-            "bright_pixel_min_value": self.bright_pixel_min_value,
-            "beam_center_excluded": self.exclude_beam_center_radius is not None,
-            "beam_center_radius_frac": (
-                self.exclude_beam_center_radius
-                if self.exclude_beam_center_radius is not None
-                else 0
-            ),
-        }
+        out[self.mask_column] = faulty_masks
         return out
-
-    def fit_transform(self, df: pd.DataFrame, y=None) -> pd.DataFrame:
-        _ = y
-        return self.transform(df)

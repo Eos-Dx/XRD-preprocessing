@@ -26,6 +26,7 @@ Supported operations:
 
 ```text
 in
+not in
 not_in
 ==
 !=
@@ -39,10 +40,17 @@ date<=
 date_after
 date_before
 date_between
+date in
+date not in
 contains
+startswith
+endswith
 isna
 notna
 ```
+
+`contains` is literal by default. Use `contains_regex=True` only when regex
+matching is explicitly intended.
 
 ## Metadata / Patient Filter
 
@@ -77,6 +85,21 @@ pipeline = Pipeline(
 ```
 
 This keeps one column = one filter.
+
+Use `GroupValueFilter` when one matching row selects the whole group. Example:
+keep all breast-side rows from patients that have at least one biopsy-positive
+measurement:
+
+```python
+from xrd_preprocessing import GroupValueFilter
+
+patient_biopsy_filter = GroupValueFilter(
+    "patientId",
+    "biopsy",
+    op="==",
+    value=True,
+)
+```
 
 ## Patient / Specimen Validity Filter
 
@@ -217,6 +240,18 @@ Rule:
 ```text
 keep finite snr_column >= min_snr_db
 drop NaN and low-SNR rows
+do not write snr_pass
+do not write snr_min_db
+drop=False is not supported
+```
+
+Audit counts are separate from filtering:
+
+```python
+from xrd_preprocessing import SNRFilter, snr_filter_statistics
+
+filtered = SNRFilter(min_snr_db=20.0).fit_transform(df)
+stats = snr_filter_statistics(df, filtered)
 ```
 
 ## Radial Profile Value Filter

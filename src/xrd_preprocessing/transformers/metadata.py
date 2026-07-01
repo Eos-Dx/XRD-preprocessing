@@ -205,11 +205,12 @@ class DropColumnsTransformer(TransformerMixin, BaseEstimator):
         return out
 
 
-class SelectColumnsTransformer(TransformerMixin, BaseEstimator):
-    """Keep configured columns in order and fail if any are missing."""
+class KeepColumnsTransformer(TransformerMixin, BaseEstimator):
+    """Keep configured columns in order."""
 
-    def __init__(self, columns: Sequence[str]) -> None:
+    def __init__(self, columns: Sequence[str], *, errors: str = "raise") -> None:
         self.columns = tuple(columns)
+        self.errors = errors
         self.stats_: dict[str, Any] | None = None
 
     def fit(self, X: pd.DataFrame, y: Any = None):
@@ -218,14 +219,19 @@ class SelectColumnsTransformer(TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        if self.errors not in {"raise", "ignore"}:
+            raise ValueError("errors must be 'raise' or 'ignore'.")
         missing = [column for column in self.columns if column not in X.columns]
-        if missing:
-            raise KeyError(f"Missing selected output columns: {missing}")
-        out = X.loc[:, list(self.columns)].copy()
+        if missing and self.errors == "raise":
+            raise KeyError(f"Missing kept output columns: {missing}")
+        kept_columns = [column for column in self.columns if column in X.columns]
+        out = X.loc[:, kept_columns].copy()
         self.stats_ = {
-            "filter_type": "select_columns",
+            "filter_type": "keep_columns",
             "rows": int(len(out)),
-            "columns": list(self.columns),
+            "columns": kept_columns,
+            "missing_columns": missing,
+            "errors": self.errors,
         }
         return out
 

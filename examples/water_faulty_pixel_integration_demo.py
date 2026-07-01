@@ -36,6 +36,7 @@ def _():
         create_mask,
         extract_gfrm_archive,
         gfrm_to_photons,
+        snr_filter_statistics,
     )
 
     return (
@@ -55,6 +56,7 @@ def _():
         plt,
         re,
         repo_root,
+        snr_filter_statistics,
     )
 
 
@@ -220,22 +222,25 @@ def _(
 
 @app.cell
 def _(no_faulty_pipeline, water_df, with_faulty_pipeline):
-    no_faulty_df = no_faulty_pipeline.fit_transform(water_df)
-    with_faulty_df = with_faulty_pipeline.fit_transform(water_df)
-    return no_faulty_df, with_faulty_df
+    no_faulty_snr_df = no_faulty_pipeline[:2].fit_transform(water_df)
+    no_faulty_df = no_faulty_pipeline[2:].fit_transform(no_faulty_snr_df)
+    with_faulty_snr_df = with_faulty_pipeline[:3].fit_transform(water_df)
+    with_faulty_df = with_faulty_pipeline[3:].fit_transform(with_faulty_snr_df)
+    return no_faulty_df, no_faulty_snr_df, with_faulty_df, with_faulty_snr_df
 
 
 @app.cell
 def _(
     mo,
     no_faulty_df,
-    no_faulty_pipeline,
+    no_faulty_snr_df,
+    snr_filter_statistics,
     water_df,
     with_faulty_df,
-    with_faulty_pipeline,
+    with_faulty_snr_df,
 ):
-    _no_stats = no_faulty_pipeline.named_steps["snr_filter"].stats_
-    _with_stats = with_faulty_pipeline.named_steps["snr_filter"].stats_
+    _no_stats = snr_filter_statistics(no_faulty_snr_df, no_faulty_df)
+    _with_stats = snr_filter_statistics(with_faulty_snr_df, with_faulty_df)
     mo.md(
         f"""
         SNR filter:
@@ -246,8 +251,8 @@ def _(
         input_frames = {len(water_df)}
         no_mask_frames_after_snr = {len(no_faulty_df)}
         with_mask_frames_after_snr = {len(with_faulty_df)}
-        no_mask_snr_db_min_max_before_filter = ({_no_stats["min_snr_db"]:.6g}, {_no_stats["max_snr_db"]:.6g})
-        with_mask_snr_db_min_max_before_filter = ({_with_stats["min_snr_db"]:.6g}, {_with_stats["max_snr_db"]:.6g})
+        no_mask_snr_db_min_max_before_filter = ({_no_stats["min_snr_db_observed"]:.6g}, {_no_stats["max_snr_db_observed"]:.6g})
+        with_mask_snr_db_min_max_before_filter = ({_with_stats["min_snr_db_observed"]:.6g}, {_with_stats["max_snr_db_observed"]:.6g})
         no_mask_failed_ids = {_no_stats["failed_ids"]}
         with_mask_failed_ids = {_with_stats["failed_ids"]}
         ```

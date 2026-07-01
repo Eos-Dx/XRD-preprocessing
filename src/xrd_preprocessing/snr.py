@@ -10,19 +10,6 @@ import pandas as pd
 from ._compat import BaseEstimator, TransformerMixin
 
 
-def _trapz_compat(y: np.ndarray, x: np.ndarray) -> float:
-    """Integrate ``y`` over ``x`` across NumPy versions."""
-    if hasattr(np, "trapezoid"):
-        return float(np.trapezoid(y, x))
-    if hasattr(np, "trapz"):
-        return float(np.trapz(y, x))
-    y = np.asarray(y, dtype=float)
-    x = np.asarray(x, dtype=float)
-    if y.size < 2 or x.size < 2:
-        return 0.0
-    return float(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(x)))
-
-
 def _calculate_poisson_snr(
     intensity: np.ndarray,
     sigma: np.ndarray | None,
@@ -31,37 +18,24 @@ def _calculate_poisson_snr(
 ) -> dict[str, float | str]:
     """Calculate profile SNR from pyFAI Poisson sigma."""
     if sigma is None:
-        return {
-            "noise_std": np.nan,
-            "snr_linear": np.nan,
-            "snr_db": np.nan,
-            "method": "poisson_missing_sigma",
-        }
+        raise ValueError("Poisson SNR requires radial_profile_sigma.")
 
     intensity = np.asarray(intensity, dtype=float)
     sigma = np.asarray(sigma, dtype=float)
     if sigma.ndim == 0:
-        sigma = np.asarray([float(sigma)], dtype=float)
+        raise ValueError("Poisson SNR sigma must be a 1D array.")
+    if intensity.ndim == 0:
+        raise ValueError("Poisson SNR intensity must be a 1D array.")
 
     n = min(len(intensity), len(sigma))
     if n < 2:
-        return {
-            "noise_std": np.nan,
-            "snr_linear": np.nan,
-            "snr_db": np.nan,
-            "method": "poisson_invalid_sigma",
-        }
+        raise ValueError("Poisson SNR requires at least two intensity/sigma points.")
 
     intensity = intensity[:n]
     sigma = sigma[:n]
     valid = np.isfinite(intensity) & np.isfinite(sigma) & (sigma > 0)
     if int(np.sum(valid)) < 2:
-        return {
-            "noise_std": np.nan,
-            "snr_linear": np.nan,
-            "snr_db": np.nan,
-            "method": "poisson_invalid_sigma",
-        }
+        raise ValueError("Poisson SNR requires at least two finite positive sigma points.")
 
     # Product SNR uses pyFAI Poisson sigma from azimuthal integration.
     # snr_q is an amplitude ratio, so decibels use 20 * log10(...).
@@ -82,11 +56,11 @@ def calculate_snr(
     intensity: np.ndarray,
     *,
     sigma: np.ndarray | None = None,
-    method: str = "poisson",
+    snr_method: str = "poisson",
 ) -> dict[str, Any]:
     """Calculate Poisson SNR for one integrated XRD profile."""
     _ = q
-    out = SNRTransformer(snr_method=method).transform(
+    out = SNRTransformer(snr_method=snr_method).transform(
         pd.DataFrame(
             {
                 "radial_profile_data": [intensity],
@@ -111,12 +85,11 @@ class SNRTransformer(TransformerMixin, BaseEstimator):
         y_column: str = "radial_profile_data",
         sigma_column: str = "radial_profile_sigma",
         snr_method: str = "poisson",
-        method: str | None = None,
     ) -> None:
         """Store transformer configuration."""
         self.y_column = y_column
         self.sigma_column = sigma_column
-        self.snr_method = str(method or snr_method).strip().lower()
+        self.snr_method = str(snr_method).strip().lower()
         if self.snr_method != "poisson":
             raise ValueError("snr_method must be 'poisson'.")
 
@@ -129,6 +102,13 @@ class SNRTransformer(TransformerMixin, BaseEstimator):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Return a copy of ``X`` with Poisson SNR columns."""
         df = X.copy()
+        missing = [
+            column
+            for column in (self.y_column, self.sigma_column)
+            if column not in df.columns
+        ]
+        if missing:
+            raise KeyError(f"Missing required SNR column(s): {', '.join(missing)}")
         df["noise_std"] = np.nan
         df["snr_linear"] = np.nan
         df["snr_db"] = np.nan
@@ -137,7 +117,9 @@ class SNRTransformer(TransformerMixin, BaseEstimator):
         for i, row in df.iterrows():
             intensity = np.asarray(row.get(self.y_column), dtype=float)
             if intensity.ndim == 0 or len(intensity) < 2:
-                continue
+                raise ValueError(
+                    f"Poisson SNR requires at least two intensity points at index {i!r}."
+                )
 
             result = _calculate_poisson_snr(
                 intensity,

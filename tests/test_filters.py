@@ -6,6 +6,7 @@ from sklearn.pipeline import Pipeline
 
 from xrd_preprocessing import (
     ColumnValueFilter,
+    GroupValueFilter,
     MetadataFilter,
     PatientFilter,
     PatientSpecimenValidityFilter,
@@ -14,6 +15,7 @@ from xrd_preprocessing import (
     SNRFilter,
     SpecimenValidityFilter,
     estimate_poni_q_range_nm_inv,
+    snr_filter_statistics,
 )
 
 
@@ -52,6 +54,37 @@ def test_column_value_filter_between_and_contains():
 
     assert between.transform(df)["sample_id"].tolist() == ["b"]
     assert contains.transform(df)["sample_id"].tolist() == ["b"]
+
+
+def test_column_value_filter_contains_is_literal_by_default():
+    df = pd.DataFrame({"sample_id": ["literal", "regex"], "comment": ["a.b", "axb"]})
+
+    literal = ColumnValueFilter("comment", op="contains", value="a.b")
+    regex = ColumnValueFilter(
+        "comment",
+        op="contains",
+        value="a.b",
+        contains_regex=True,
+    )
+
+    assert literal.transform(df)["sample_id"].tolist() == ["literal"]
+    assert regex.transform(df)["sample_id"].tolist() == ["literal", "regex"]
+
+
+def test_group_value_filter_keeps_whole_patient_when_one_row_matches():
+    df = pd.DataFrame(
+        {
+            "patientId": ["p1", "p1", "p2", "p2"],
+            "specimenId": ["p1_left", "p1_right", "p2_left", "p2_right"],
+            "biopsy": [True, False, False, False],
+        }
+    )
+
+    out = GroupValueFilter("patientId", "biopsy", value=True).fit_transform(df)
+
+    assert out["specimenId"].tolist() == ["p1_left", "p1_right"]
+    assert out["biopsy"].tolist() == [True, False]
+    assert out.attrs == {}
 
 
 @pytest.mark.parametrize(
@@ -107,9 +140,9 @@ def test_column_value_filter_branch_ops(op, expected):
     [
         ("in", {}, "values must be provided"),
         ("not_in", {}, "values must be provided"),
-        ("between", {}, "lower and upper"),
-        ("date_between", {}, "lower and upper"),
-        ("date in", {}, "values must be provided"),
+        ("between", {}, "lower/upper"),
+        ("date_between", {}, "lower/upper"),
+        ("date in", {}, "value or values"),
         ("unsupported", {}, "Unsupported"),
     ],
 )
@@ -231,7 +264,8 @@ def test_snr_filter_accepts_custom_snr_column():
     out = filt.transform(df)
 
     assert out["sample_id"].tolist() == ["ok"]
-    assert filt.stats_["failed_ids"] == ["low"]
+    assert filt.stats_["filter_type"] == "column_value"
+    assert filt.stats_["rows_fail"] == 1
 
 
 def test_snr_filter_default_column_is_snr_db():
@@ -523,10 +557,8 @@ def test_radial_profile_value_filter_compare_ops(op):
 def test_snr_filter_missing_column_and_no_finite_values():
     with pytest.raises(KeyError, match="snr_db"):
         SNRFilter().transform(pd.DataFrame({"id": ["a"]}))
+    with pytest.raises(KeyError, match="snr_db"):
+        snr_filter_statistics(pd.DataFrame({"id": ["a"]}), pd.DataFrame())
 
-    out = SNRFilter(drop=False).transform(
-        pd.DataFrame({"sample_id": ["a"], "snr_db": [np.nan]})
-    )
-
-    assert out["snr_pass"].tolist() == [False]
-    assert np.isnan(SNRFilter(drop=False).fit_transform(out)["snr_db"].iloc[0])
+    with pytest.raises(ValueError, match="drop=False"):
+        SNRFilter(drop=False)

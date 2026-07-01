@@ -24,7 +24,7 @@ Output columns:
 noise_std
 snr_linear
 snr_db
-snr_method_used      poisson, poisson_missing_sigma, or poisson_invalid_sigma
+snr_method_used      poisson
 ```
 
 ## Formula
@@ -48,9 +48,11 @@ azimuthal integration.
 No smoothing is used. No residual profile is used. SNR is calculated only from
 integrated intensity and pyFAI Poisson sigma.
 
-If sigma is missing, SNR is NaN and `snr_method_used = poisson_missing_sigma`.
+If sigma is missing, SNR raises an error.
 
-If sigma is invalid, SNR is NaN and `snr_method_used = poisson_invalid_sigma`.
+If sigma is invalid, SNR raises an error.
+
+If profile intensity has fewer than two points, SNR raises an error.
 
 ## Filtering
 
@@ -69,15 +71,31 @@ keep row when snr_db >= 20 dB
 drop row when snr_db is NaN or snr_db < 20 dB
 ```
 
-After `transform`, `SNRFilter.stats_` stores:
+`SNRFilter` is a thin `ColumnValueFilter` alias. It does not write SNR-specific
+columns.
+
+It does not create:
 
 ```text
-rows_in
-rows_pass
-rows_fail
-min_snr_db
-max_snr_db
-failed_ids, when sample_id column exists
+snr_pass
+snr_min_db
+```
+
+`drop=False` is not supported because `SNRFilter` is only a named
+`ColumnValueFilter` for `snr_db >= min_snr_db`.
+
+Use a separate stats function when audit output is needed:
+
+```python
+from xrd_preprocessing import SNRFilter, snr_filter_statistics
+
+filtered = SNRFilter(min_snr_db=20.0).fit_transform(df)
+stats = snr_filter_statistics(
+    before_df=df,
+    after_df=filtered,
+    snr_column="snr_db",
+    min_snr_db=20.0,
+)
 ```
 
 ## Pipeline Order

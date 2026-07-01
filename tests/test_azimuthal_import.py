@@ -235,7 +235,7 @@ def test_azimuthal_integration_can_use_row_reference_thickness_column():
     assert out["calculated_distance"].iloc[0] == pytest.approx(0.095)
 
 
-def test_azimuthal_integration_accepts_sample_and_reference_sequences():
+def test_azimuthal_integration_rejects_constructor_thickness_overrides():
     image = fake_image()
     df = pd.DataFrame(
         {
@@ -243,19 +243,23 @@ def test_azimuthal_integration_accepts_sample_and_reference_sequences():
             "ponifile": [fake_poni(), fake_poni()],
             "interpolation_q_range": [None, None],
             "azimuthal_range": [None, None],
+            "sample_thickness_mm": [25.0, 10.0],
         }
     )
 
-    out = AzimuthalIntegration(
-        npt=32,
-        calibration_mode="poni",
-        sample_thickness_mm=[25.0, 10.0],
-        thickness_reference_mm=[15.0, 40.0],
-    ).fit_transform(df)
+    with pytest.raises(TypeError, match="sample_thickness_mm"):
+        AzimuthalIntegration(
+            npt=32,
+            calibration_mode="poni",
+            sample_thickness_mm=[25.0, 10.0],
+        )
 
-    assert out["sample_thickness_mm"].tolist() == [25.0, 10.0]
-    assert out["thickness_reference_mm"].tolist() == [15.0, 40.0]
-    assert out["calculated_distance"].tolist() == pytest.approx([0.095, 0.115])
+    with pytest.raises(TypeError, match="thickness_reference_mm must be a scalar"):
+        AzimuthalIntegration(
+            npt=32,
+            calibration_mode="poni",
+            thickness_reference_mm=[15.0, 40.0],
+        ).fit_transform(df)
 
 
 def test_azimuthal_integration_reference_thickness_column_missing_raises():
@@ -275,22 +279,6 @@ def test_azimuthal_integration_reference_thickness_column_missing_raises():
             calibration_mode="poni",
             thickness_reference_column="calibrant_thickness_mm",
         ).fit_transform(df)
-
-
-def test_row_values_validation_branches():
-    assert azimuthal_module._row_values(None, n_rows=2, name="x") is None
-    assert azimuthal_module._row_values(1.5, n_rows=2, name="x") == [1.5, 1.5]
-    assert azimuthal_module._row_values([1, 2], n_rows=2, name="x") == [1.0, 2.0]
-    with pytest.raises(TypeError, match="numeric"):
-        azimuthal_module._row_values("bad", n_rows=2, name="x")
-    with pytest.raises(ValueError, match="finite"):
-        azimuthal_module._row_values(np.nan, n_rows=2, name="x")
-    with pytest.raises(ValueError, match="one-dimensional"):
-        azimuthal_module._row_values([[1]], n_rows=1, name="x")
-    with pytest.raises(ValueError, match="length"):
-        azimuthal_module._row_values([1], n_rows=2, name="x")
-    with pytest.raises(ValueError, match="finite"):
-        azimuthal_module._row_values([1, np.nan], n_rows=2, name="x")
 
 
 def test_adjust_poni_distance_handles_missing_distance():

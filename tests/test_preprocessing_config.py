@@ -25,7 +25,7 @@ def test_bundled_preprocessing_template_contract():
 
     config = load_preprocessing_config()
 
-    assert config["xrd_preprocessing"]["release_tag"] == "v0.1.5-beta"
+    assert config["xrd_preprocessing"]["release_tag"] == "v0.1.6-beta"
     assert config["preprocessing"]["version"] == "0.1-template"
     assert config["raw_data"]["source"] == "gfrm"
     assert "io" in config

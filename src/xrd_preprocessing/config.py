@@ -121,24 +121,37 @@ def _resolve_extends(
     *,
     source_path: Path | None = None,
 ) -> dict[str, Any]:
-    base_name = config.get("extends")
-    if base_name is None:
+    base_names = config.get("extends")
+    if base_names is None:
         return config
-    local_base = None
-    if source_path is not None:
-        candidate = (source_path.parent / str(base_name)).resolve()
-        if candidate.is_file():
-            local_base = candidate
-    if local_base is not None:
-        base = yaml.safe_load(local_base.read_text(encoding="utf-8"))
-    else:
-        resource = files(PREPROCESSING_CONFIG_PACKAGE).joinpath(str(base_name))
-        if not resource.is_file():
-            raise FileNotFoundError(f"Unknown preprocessing config template: {base_name}")
-        base = yaml.safe_load(resource.read_text(encoding="utf-8"))
-    base = _resolve_extends(base, source_path=local_base)
-    merged = _deep_merge(base, {k: v for k, v in config.items() if k != "extends"})
+    if isinstance(base_names, str):
+        base_names = [base_names]
+    if not isinstance(base_names, list):
+        raise TypeError("extends must be a string or a list of strings.")
+    merged: dict[str, Any] = {}
+    for base_name in base_names:
+        base, base_path = _load_base_config(str(base_name), source_path=source_path)
+        merged = _deep_merge(
+            merged,
+            _resolve_extends(base, source_path=base_path),
+        )
+    merged = _deep_merge(merged, {k: v for k, v in config.items() if k != "extends"})
     return merged
+
+
+def _load_base_config(
+    base_name: str,
+    *,
+    source_path: Path | None,
+) -> tuple[dict[str, Any], Path | None]:
+    if source_path is not None:
+        candidate = (source_path.parent / base_name).resolve()
+        if candidate.is_file():
+            return yaml.safe_load(candidate.read_text(encoding="utf-8")), candidate
+    resource = files(PREPROCESSING_CONFIG_PACKAGE).joinpath(base_name)
+    if not resource.is_file():
+        raise FileNotFoundError(f"Unknown preprocessing config template: {base_name}")
+    return yaml.safe_load(resource.read_text(encoding="utf-8")), None
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

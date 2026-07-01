@@ -11,9 +11,9 @@ from .metadata import (
     ConstantQRangeTransformer,
     DropColumnsTransformer,
     JoblibWriterTransformer,
+    KeepColumnsTransformer,
     ProductColumnBuilder,
     RequiredColumnsTransformer,
-    SelectColumnsTransformer,
 )
 from .profiles import SimpleRadialProfileTransformer
 
@@ -25,10 +25,10 @@ __all__ = [
     "H5SessionSelectorTransformer",
     "H5ToDataFrameTransformer",
     "JoblibWriterTransformer",
+    "KeepColumnsTransformer",
     "PairedGroupFilter",
     "ProductColumnBuilder",
     "ProductStatusGroupFilter",
     "RequiredColumnsTransformer",
-    "SelectColumnsTransformer",
     "SimpleRadialProfileTransformer",
 ]

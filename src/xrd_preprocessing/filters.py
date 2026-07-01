@@ -10,6 +10,7 @@ import pandas as pd
 
 from ._compat import BaseEstimator, TransformerMixin
 from .azimuthal import estimate_poni_q_range_nm_inv
+from .filter_ops import build_filter_mask
 
 
 class ColumnValueFilter(TransformerMixin, BaseEstimator):
@@ -26,6 +27,7 @@ class ColumnValueFilter(TransformerMixin, BaseEstimator):
         upper: Any = None,
         keep_na: bool = False,
         reset_index: bool = True,
+        contains_regex: bool = False,
     ) -> None:
         self.column = column
         self.op = str(op)
@@ -35,6 +37,7 @@ class ColumnValueFilter(TransformerMixin, BaseEstimator):
         self.upper = upper
         self.keep_na = bool(keep_na)
         self.reset_index = bool(reset_index)
+        self.contains_regex = bool(contains_regex)
         self.stats_: dict[str, Any] | None = None
 
     def fit(self, X: pd.DataFrame, y=None):
@@ -43,72 +46,15 @@ class ColumnValueFilter(TransformerMixin, BaseEstimator):
         return self
 
     def _build_mask(self, series: pd.Series) -> pd.Series:
-        op = self.op.lower()
-        if op == "in":
-            if self.values is None:
-                raise ValueError("values must be provided for op='in'.")
-            return series.isin(self.values)
-        if op == "not_in":
-            if self.values is None:
-                raise ValueError("values must be provided for op='not_in'.")
-            return ~series.isin(self.values)
-        if op in {"==", "eq"}:
-            return series.eq(self.value)
-        if op in {"!=", "ne"}:
-            return series.ne(self.value)
-        if op in {">", ">=", "<", "<="}:
-            numeric = pd.to_numeric(series, errors="coerce")
-            threshold = float(self.value)
-            if op == ">":
-                return numeric.gt(threshold)
-            if op == ">=":
-                return numeric.ge(threshold)
-            if op == "<":
-                return numeric.lt(threshold)
-            return numeric.le(threshold)
-        if op == "between":
-            if self.lower is None or self.upper is None:
-                raise ValueError("lower and upper must be provided for op='between'.")
-            numeric = pd.to_numeric(series, errors="coerce")
-            return numeric.between(float(self.lower), float(self.upper), inclusive="both")
-        if op in {"date>=", "date_after_or_equal", "date_after"}:
-            date_values = pd.to_datetime(series, errors="coerce")
-            cutoff = pd.Timestamp(self.value)
-            if op == "date_after":
-                return date_values.gt(cutoff)
-            return date_values.ge(cutoff)
-        if op in {"date<=", "date_before_or_equal", "date_before"}:
-            date_values = pd.to_datetime(series, errors="coerce")
-            cutoff = pd.Timestamp(self.value)
-            if op == "date_before":
-                return date_values.lt(cutoff)
-            return date_values.le(cutoff)
-        if op == "date_between":
-            if self.lower is None or self.upper is None:
-                raise ValueError("lower and upper must be provided for op='date_between'.")
-            date_values = pd.to_datetime(series, errors="coerce")
-            return date_values.between(
-                pd.Timestamp(self.lower),
-                pd.Timestamp(self.upper),
-                inclusive="both",
-            )
-        if op in {"date in", "date_in"}:
-            if self.values is None:
-                raise ValueError("values must be provided for op='date in'.")
-            date_values = pd.to_datetime(series, errors="coerce").dt.date.astype(str)
-            allowed_dates = {
-                str(pd.Timestamp(value).date())
-                for value in self.values
-                if not pd.isna(pd.Timestamp(value))
-            }
-            return date_values.isin(allowed_dates)
-        if op == "contains":
-            return series.fillna("").astype(str).str.contains(str(self.value), regex=True, na=False)
-        if op == "isna":
-            return series.isna()
-        if op == "notna":
-            return series.notna()
-        raise ValueError(f"Unsupported column filter op: {self.op}")
+        return build_filter_mask(
+            series,
+            op=self.op,
+            value=self.value,
+            values=self.values,
+            lower=self.lower,
+            upper=self.upper,
+            contains_regex=self.contains_regex,
+        )
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         if self.column not in X.columns:
@@ -128,6 +74,7 @@ class ColumnValueFilter(TransformerMixin, BaseEstimator):
             "filter_values": self.values,
             "filter_lower": self.lower,
             "filter_upper": self.upper,
+            "contains_regex": self.contains_regex,
             "rows_in": int(len(out)),
             "rows_pass": int(np.sum(mask)),
             "rows_fail": int(len(out) - np.sum(mask)),
@@ -149,6 +96,7 @@ class MetadataFilter(ColumnValueFilter):
         upper: Any = None,
         keep_na: bool = False,
         reset_index: bool = True,
+        contains_regex: bool = False,
     ) -> None:
         super().__init__(
             column,
@@ -159,6 +107,7 @@ class MetadataFilter(ColumnValueFilter):
             upper=upper,
             keep_na=keep_na,
             reset_index=reset_index,
+            contains_regex=contains_regex,
         )
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -169,6 +118,76 @@ class MetadataFilter(ColumnValueFilter):
 
 class PatientFilter(MetadataFilter):
     """Metadata filter for patient/sample selection stages."""
+
+
+class GroupValueFilter(TransformerMixin, BaseEstimator):
+    """Keep all rows from groups where at least one row matches a value filter."""
+
+    def __init__(
+        self,
+        group_column: str,
+        column: str,
+        *,
+        op: str = "==",
+        value: Any = None,
+        values: Sequence[Any] | None = None,
+        lower: Any = None,
+        upper: Any = None,
+        reset_index: bool = True,
+        contains_regex: bool = False,
+    ) -> None:
+        self.group_column = group_column
+        self.column = column
+        self.op = str(op)
+        self.value = value
+        self.values = list(values) if values is not None else None
+        self.lower = lower
+        self.upper = upper
+        self.reset_index = bool(reset_index)
+        self.contains_regex = bool(contains_regex)
+        self.stats_: dict[str, Any] | None = None
+
+    def fit(self, X: pd.DataFrame, y=None):
+        _ = X
+        _ = y
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        missing = [
+            column for column in (self.group_column, self.column) if column not in X
+        ]
+        if missing:
+            raise KeyError(f"Missing group-value filter columns: {missing}")
+        out = X.copy()
+        row_match = build_filter_mask(
+            out[self.column],
+            op=self.op,
+            value=self.value,
+            values=self.values,
+            lower=self.lower,
+            upper=self.upper,
+            contains_regex=self.contains_regex,
+        )
+        valid_groups = set(out.loc[row_match, self.group_column].dropna())
+        group_match = out[self.group_column].isin(valid_groups)
+        filtered = out.loc[group_match].copy()
+        if self.reset_index:
+            filtered.reset_index(drop=True, inplace=True)
+        self.stats_ = {
+            "filter_type": "group_value",
+            "group_column": self.group_column,
+            "filter_column": self.column,
+            "filter_op": self.op,
+            "filter_value": self.value,
+            "filter_values": self.values,
+            "rows_in": int(len(out)),
+            "rows_pass": int(group_match.sum()),
+            "rows_fail": int(len(out) - group_match.sum()),
+            "groups_in": int(out[self.group_column].nunique()),
+            "groups_pass": int(filtered[self.group_column].nunique()),
+            "matching_rows": int(row_match.sum()),
+        }
+        return filtered
 
 
 class SpecimenValidityFilter(TransformerMixin, BaseEstimator):
@@ -669,10 +688,13 @@ class SNRFilter(ColumnValueFilter):
         self,
         snr_column: str = "snr_db",
         min_snr_db: float = 20.0,
-        pass_column: str = "snr_pass",
         drop: bool = True,
         reset_index: bool = False,
     ) -> None:
+        if not drop:
+            raise ValueError(
+                "SNRFilter is a ColumnValueFilter alias; drop=False is not supported."
+            )
         super().__init__(
             snr_column,
             op=">=",
@@ -682,37 +704,38 @@ class SNRFilter(ColumnValueFilter):
         )
         self.snr_column = snr_column
         self.min_snr_db = float(min_snr_db)
-        self.pass_column = pass_column
         self.drop = bool(drop)
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        if self.snr_column not in X.columns:
-            raise KeyError(f"Column '{self.snr_column}' not found in DataFrame.")
-        out = X.copy()
-        snr = pd.to_numeric(out[self.snr_column], errors="coerce")
-        passed = np.isfinite(snr) & (snr >= self.min_snr_db)
-        out[self.pass_column] = passed.to_numpy(dtype=bool)
-        out["snr_min_db"] = self.min_snr_db
-        finite = snr[np.isfinite(snr)]
-        failed_ids = (
-            out.loc[~out[self.pass_column], "sample_id"].astype(str).tolist()
-            if "sample_id" in out.columns
-            else []
-        )
-        self.stats_ = {
-            "filter_type": "snr",
-            "filter_column": self.snr_column,
-            "filter_op": ">=",
-            "filter_value": self.min_snr_db,
-            "rows_in": int(len(out)),
-            "rows_pass": int(np.sum(passed)),
-            "rows_fail": int(len(out) - np.sum(passed)),
-            "min_snr_db": float(np.nanmin(finite)) if len(finite) else np.nan,
-            "max_snr_db": float(np.nanmax(finite)) if len(finite) else np.nan,
-            "failed_ids": failed_ids,
-        }
-        if self.drop:
-            out = out.loc[out[self.pass_column]].copy()
-            if self.reset_index:
-                out.reset_index(drop=True, inplace=True)
-        return out
+
+def snr_filter_statistics(
+    before_df: pd.DataFrame,
+    after_df: pd.DataFrame,
+    *,
+    snr_column: str = "snr_db",
+    min_snr_db: float = 20.0,
+    id_column: str = "sample_id",
+) -> dict[str, Any]:
+    """Return SNR filter audit statistics without mutating DataFrames."""
+    if snr_column not in before_df.columns:
+        raise KeyError(f"Column '{snr_column}' not found in before_df.")
+    before_snr = pd.to_numeric(before_df[snr_column], errors="coerce")
+    finite = before_snr[np.isfinite(before_snr)]
+    failed_ids = []
+    if id_column in before_df.columns:
+        passed = np.isfinite(before_snr) & (before_snr >= float(min_snr_db))
+        failed_ids = before_df.loc[~passed, id_column].astype(str).tolist()
+    return {
+        "filter_type": "snr",
+        "snr_column": snr_column,
+        "min_snr_db": float(min_snr_db),
+        "rows_in": int(len(before_df)),
+        "rows_pass": int(len(after_df)),
+        "rows_fail": int(len(before_df) - len(after_df)),
+        "min_snr_db_observed": (
+            float(np.nanmin(finite)) if len(finite) else np.nan
+        ),
+        "max_snr_db_observed": (
+            float(np.nanmax(finite)) if len(finite) else np.nan
+        ),
+        "failed_ids": failed_ids,
+    }

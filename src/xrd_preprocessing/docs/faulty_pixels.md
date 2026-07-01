@@ -72,10 +72,10 @@ above `500`, every one of them is masked.
 
 ## Beam-Center Exclusion From PONI
 
-Beam-center exclusion is enabled by default:
+Beam-center exclusion requires explicit opt-in:
 
 ```text
-exclude_beam_center_radius = 0.04
+exclude_beam_center_radius = None
 ```
 
 The detector reads beam geometry from the PONI text:
@@ -129,19 +129,21 @@ detector damage.
 faulty_pixel_mask           Nx2 coordinates, invalid + bright faulty
 ```
 
-## Transformer Stats
+## Statistics
 
-After `transform`, `FaultyPixelDetector.stats_` stores:
+Use a separate stats function:
+
+```python
+from xrd_preprocessing import faulty_pixel_statistics
+
+out = FaultyPixelDetector().fit_transform(df)
+stats = faulty_pixel_statistics(out)
+```
+
+Returned fields:
 
 ```text
-image_column
 n_images
 faulty_pixels_per_row
 total_faulty_pixels
-detect_negative_pixels
-detect_bright_pixels
-faulty_pixel_rule
-bright_pixel_min_value
-beam_center_excluded
-beam_center_radius_frac
 ```

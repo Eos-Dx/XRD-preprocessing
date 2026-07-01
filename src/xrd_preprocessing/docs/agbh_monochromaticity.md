@@ -103,6 +103,18 @@ Compact manifest for review or product JSON/H5 metadata:
 manifest_df = qc.selection_.manifest_columns()
 ```
 
+Filtering and audit are separate:
+
+```python
+from xrd_preprocessing import AgBHMonochromaticityFilter, agbh_filter_statistics
+
+accepted_df = AgBHMonochromaticityFilter(max_score=0.1).fit_transform(scored_agbh_df)
+stats = agbh_filter_statistics(scored_agbh_df, accepted_df, max_score=0.1)
+```
+
+`AgBHMonochromaticityFilter` is a column-value alias for
+`agbh_monochromaticity_score <= max_score`. It does not write audit columns.
+
 Expected input columns:
 
 ```text
@@ -127,6 +139,10 @@ agbh_baseline_fit_scale
 agbh_baseline_fit_offset
 agbh_baseline_fit_linear_background
 ```
+
+`agbh_kbeta_peak_window_details` is a JSON string. This keeps the DataFrame
+portable for CSV, Parquet, JSON, and MLflow artifacts while preserving per-peak
+audit details.
 
 Use this result as product-owned quality metadata, for example by writing an
 accepted/review/rejected day or session status into product JSON/H5 metadata.

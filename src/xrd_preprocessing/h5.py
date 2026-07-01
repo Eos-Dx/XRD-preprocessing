@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .azimuthal import estimate_poni_q_range_nm_inv
+from .filter_ops import build_filter_mask
 from .gfrm import gfrm_to_photons
 
 
@@ -160,115 +161,27 @@ def _coerce_filter(spec: H5SessionFilter | dict[str, Any]) -> H5SessionFilter:
     raise TypeError(f"Expected H5SessionFilter or dict, got {type(spec).__name__}.")
 
 
-def _sequence_values(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, set | tuple | list):
-        return list(value)
-    return [value]
-
-
-def _filter_values(filter_spec: H5SessionFilter) -> list[Any]:
-    if filter_spec.values is not None:
-        return list(filter_spec.values)
-    return _sequence_values(filter_spec.value)
-
-
-def _date_series(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(series, errors="coerce").dt.date
-
-
-def _date_values(values: Sequence[Any]) -> set[Any]:
-    timestamps = pd.to_datetime(list(values), errors="coerce")
-    if pd.isna(timestamps).any():
-        invalid = [
-            value
-            for value, timestamp in zip(values, timestamps, strict=False)
-            if pd.isna(timestamp)
-        ]
-        raise ValueError(f"Invalid H5 date filter values: {invalid!r}.")
-    return set(timestamps.date)
-
-
 def _filter_mask(df: pd.DataFrame, filter_spec: H5SessionFilter) -> pd.Series:
     if filter_spec.column not in df.columns:
         if filter_spec.fallback is not None:
             return _filter_mask(df, _coerce_filter(filter_spec.fallback))
         raise ValueError(f"H5 session metadata is missing column {filter_spec.column!r}.")
 
-    series = df[filter_spec.column]
-    op = filter_spec.op.lower()
-    if op in {"==", "eq"}:
-        return series == filter_spec.value
-    if op in {"!=", "ne"}:
-        return series != filter_spec.value
-    if op == "in":
-        return series.isin(_filter_values(filter_spec))
-    if op in {"not in", "not_in"}:
-        return ~series.isin(_filter_values(filter_spec))
-    if op == "contains":
-        return series.astype(str).str.contains(str(filter_spec.value), na=False)
-    if op == "startswith":
-        return series.astype(str).str.startswith(str(filter_spec.value), na=False)
-    if op == "endswith":
-        return series.astype(str).str.endswith(str(filter_spec.value), na=False)
-    if op == "isna":
-        return series.isna()
-    if op == "notna":
-        return series.notna()
-    if op in {">", ">=", "<", "<="}:
-        if op == ">":
-            return series > filter_spec.value
-        if op == ">=":
-            return series >= filter_spec.value
-        if op == "<":
-            return series < filter_spec.value
-        return series <= filter_spec.value
-
-    if op in {"date>", "date>=", "date<", "date<="}:
-        timestamps = pd.to_datetime(series, errors="coerce")
-        threshold = pd.to_datetime(filter_spec.value, errors="coerce")
-        if pd.isna(threshold):
-            raise ValueError(f"Invalid H5 date filter value: {filter_spec.value!r}.")
-        if op == "date>":
-            return timestamps > threshold
-        if op == "date>=":
-            return timestamps >= threshold
-        if op == "date<":
-            return timestamps < threshold
-        return timestamps <= threshold
-
-    if op in {"date in", "date_in", "date not in", "date_not_in"}:
-        values = _filter_values(filter_spec)
-        if not values:
-            raise ValueError(f"{filter_spec.op!r} requires value or values.")
-        allowed_dates = _date_values(values)
-        mask = _date_series(series).isin(allowed_dates)
-        if op in {"date not in", "date_not_in"}:
-            return ~mask
-        return mask
-
-    if op in {"between", "date_between"}:
-        lower = filter_spec.lower
-        upper = filter_spec.upper
-        if lower is None or upper is None:
-            values = _sequence_values(filter_spec.value)
-            if len(values) != 2:
-                raise ValueError(
-                    f"{filter_spec.op!r} requires lower/upper or two values."
-                )
-            lower, upper = values
-        if op == "date_between":
-            values = pd.to_datetime(series, errors="coerce")
-            lower = pd.to_datetime(lower, errors="coerce")
-            upper = pd.to_datetime(upper, errors="coerce")
-        else:
-            values = series
-        return (values >= lower) & (values <= upper)
-
-    raise ValueError(f"Unsupported H5 session filter op: {filter_spec.op!r}.")
+    try:
+        return build_filter_mask(
+            df[filter_spec.column],
+            op=filter_spec.op,
+            value=filter_spec.value,
+            values=filter_spec.values,
+            lower=filter_spec.lower,
+            upper=filter_spec.upper,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        message = message.replace("Invalid date filter value", "Invalid H5 date filter value")
+        message = message.replace("Invalid date filter values", "Invalid H5 date filter values")
+        message = message.replace("Unsupported filter op", "Unsupported H5 session filter op")
+        raise ValueError(message) from exc
 
 
 def _row_matches_filters(
@@ -918,6 +831,28 @@ def _gfrm_to_photons_from_embedded_raw_file(
     return photons, metadata
 
 
+def _gfrm_to_photons_from_raw_file_bytes(
+    raw_file: Any,
+    source_path: str | None,
+) -> tuple[np.ndarray, dict[str, Any]] | None:
+    if raw_file is None:
+        return None
+    raw_bytes = np.asarray(raw_file, dtype=np.uint8).tobytes()
+    with tempfile.NamedTemporaryFile(suffix=".gfrm") as handle:
+        handle.write(raw_bytes)
+        handle.flush()
+        photons, metadata = gfrm_to_photons(handle.name)
+    metadata.update(
+        {
+            "source": "embedded measurement raw_file",
+            "source_file": source_path,
+            "source_path": source_path,
+            "embedded_raw_file": True,
+        }
+    )
+    return photons, metadata
+
+
 def _archive_sessions(
     file_path: Path,
     *,
@@ -1003,6 +938,409 @@ def _validate_clinical_ids(df: pd.DataFrame, *, frame_name: str) -> None:
             invalid.append(column)
     if invalid:
         raise ValueError(f"{frame_name} has empty required clinical IDs: {invalid}")
+
+
+def _fields(group: h5py.Group | h5py.Dataset | None) -> dict[str, Any]:
+    if group is None:
+        return {}
+    out = _attrs(group)
+    if isinstance(group, h5py.Group):
+        out.update(_scalar_fields(group))
+    return out
+
+
+def _session_detector_catalog(session: h5py.Group) -> dict[int, dict[str, Any]]:
+    catalog: dict[int, dict[str, Any]] = {}
+    detector_sets = session.get("instrument/detector_sets")
+    if not isinstance(detector_sets, h5py.Group):
+        return catalog
+    for detector_set_name in sorted(detector_sets):
+        detector_set = detector_sets[detector_set_name]
+        if not isinstance(detector_set, h5py.Group):
+            continue
+        detectors = detector_set.get("detectors")
+        if not isinstance(detectors, h5py.Group):
+            continue
+        for detector_name in sorted(detectors):
+            detector = detectors[detector_name]
+            if not isinstance(detector, h5py.Group):
+                continue
+            fields = {"name": detector_name, **_fields(detector)}
+            detector_id = fields.get("detector_id")
+            if detector_id is not None:
+                catalog[int(detector_id)] = fields
+    return catalog
+
+
+def _set_group_by_index(session: h5py.Group, set_idx: int) -> h5py.Group | None:
+    sets = session.get("sets")
+    if not isinstance(sets, h5py.Group):
+        return None
+    group = _first_child_by_prefix(sets, f"set_{set_idx:03d}_")
+    return group if isinstance(group, h5py.Group) else None
+
+
+def _set_measurements(set_group: h5py.Group) -> list[dict[str, Any]]:
+    measurements = set_group.get("measurements")
+    if not isinstance(measurements, h5py.Group):
+        return []
+    return [
+        {"name": name, **_fields(measurements[name])}
+        for name in sorted(measurements)
+        if isinstance(measurements[name], h5py.Group)
+    ]
+
+
+def _first_measurement_dataset(
+    set_group: h5py.Group,
+    dataset_name: str,
+) -> np.ndarray | str | None:
+    measurements = set_group.get("measurements")
+    if not isinstance(measurements, h5py.Group):
+        return None
+    for measurement_name in sorted(measurements):
+        measurement = measurements[measurement_name]
+        if dataset_name in measurement and isinstance(
+            measurement[dataset_name], h5py.Dataset
+        ):
+            return _decode(measurement[dataset_name][()])
+    return None
+
+
+def _processing_config_from_set(set_group: h5py.Group) -> dict[str, Any]:
+    processing = set_group.get("processing")
+    if not isinstance(processing, h5py.Group) or "config" not in processing:
+        return {}
+    return _json_dataset(processing, "config", default={}) or {}
+
+
+def _integration_from_set(
+    set_group: h5py.Group,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    integration = set_group.get("integration")
+    if not isinstance(integration, h5py.Group):
+        return None
+    if "q" not in integration or "i" not in integration:
+        return None
+    return integration["q"][()], integration["i"][()]
+
+
+def _session_row_base(
+    session_row: dict[str, Any],
+    file_path: Path,
+) -> dict[str, Any]:
+    row = dict(session_row)
+    row["source_file"] = str(file_path)
+    return row
+
+
+class H5ContainerReader:
+    """Read v0.3 H5 session containers into DataFrames."""
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        data_preference: str = "gfrm",
+        raw_root: str | Path | None = None,
+        convert_gfrm: bool = True,
+        require_clinical_ids: bool = True,
+        drop_missing_sample_thickness: bool = False,
+        h5_session_df: pd.DataFrame | None = None,
+        h5_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+        max_sessions: int | None = None,
+        session_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
+        session_started_at_min: str | pd.Timestamp | None = None,
+        set_category: str | list[str] | tuple[str, ...] | set[str] | None = None,
+        measurement_filters: Sequence[H5SessionFilter | dict[str, Any]] | None = None,
+    ) -> None:
+        self.path = Path(path)
+        self.data_preference = data_preference
+        self.raw_root = raw_root
+        self.convert_gfrm = convert_gfrm
+        self.require_clinical_ids = require_clinical_ids
+        self.drop_missing_sample_thickness = drop_missing_sample_thickness
+        self.h5_session_df = h5_session_df
+        self.h5_filters = h5_filters
+        self.max_sessions = max_sessions
+        self.session_category = session_category
+        self.session_started_at_min = session_started_at_min
+        self.set_category = set_category
+        self.measurement_filters = measurement_filters
+
+    def read_to_session_df(self) -> pd.DataFrame:
+        """Return filtered session metadata without loading detector frames."""
+        if self.h5_session_df is None:
+            return filter_h5_sessions(
+                self.path,
+                self.h5_filters,
+                session_category=self.session_category,
+                session_started_at_min=self.session_started_at_min,
+                max_sessions=self.max_sessions,
+            )
+        return filter_h5_session_df(
+            self.h5_session_df,
+            self.h5_filters,
+            session_category=self.session_category,
+            session_started_at_min=self.session_started_at_min,
+            max_sessions=self.max_sessions,
+        )
+
+    def read_to_serssion_df(self) -> pd.DataFrame:
+        """Backward-compatible alias for a common misspelling."""
+        return self.read_to_session_df()
+
+    def read_to_measurement_set_df(self) -> pd.DataFrame:
+        """Return selected measurement-set metadata without loading frames."""
+        return list_h5_measurement_sets(
+            self.path,
+            session_df=self.read_to_session_df(),
+            set_category=self.set_category,
+            drop_missing_sample_thickness=self.drop_missing_sample_thickness,
+        )
+
+    def read_to_calibration_df(self) -> pd.DataFrame:
+        """Read only calibration rows."""
+        calibration_df, _ = self._read_rows(wanted="calibration")
+        return calibration_df
+
+    def read_to_measurement_df(self) -> pd.DataFrame:
+        """Read only non-calibration measurement rows."""
+        _, measurement_df = self._read_rows(wanted="measurement")
+        return measurement_df
+
+    def read(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Return ``(calibration_df, measurement_df)``."""
+        return self._read_rows(wanted="both")
+
+    def _read_rows(self, *, wanted: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        if wanted not in {"both", "calibration", "measurement"}:
+            raise ValueError(f"Unsupported read target: {wanted!r}.")
+        calibration_rows: list[dict[str, Any]] = []
+        measurement_rows: list[dict[str, Any]] = []
+        drop_stats: dict[str, int] = {"missing_sample_thickness": 0}
+        sessions = self.read_to_session_df().to_dict("records")
+        set_allowed = _allowed_values(self.set_category)
+
+        with h5py.File(self.path, "r") as h5:
+            version = _decode(h5.attrs.get("schema_version"))
+            fmt = _decode(h5.attrs.get("format"))
+            if version != "0.3" or fmt not in {"xrd-session", "xrd-session-archive"}:
+                raise ValueError(
+                    "Unsupported container format: "
+                    f"schema_version={version!r}, format={fmt!r}"
+                )
+            for session_row in sessions:
+                session_path = session_row.get("session_path")
+                if not isinstance(session_path, str) or session_path not in h5:
+                    continue
+                session = h5[session_path]
+                if not isinstance(session, h5py.Group):
+                    continue
+                self._append_session_rows(
+                    file_path=self.path,
+                    session=session,
+                    session_meta=_session_row_base(session_row, self.path),
+                    set_allowed=set_allowed,
+                    wanted=wanted,
+                    calibration_rows=calibration_rows,
+                    measurement_rows=measurement_rows,
+                    drop_stats=drop_stats,
+                )
+
+        calibration_df = pd.DataFrame(calibration_rows)
+        measurement_df = pd.DataFrame(measurement_rows)
+        measurement_df.attrs["dropped_missing_sample_thickness"] = drop_stats[
+            "missing_sample_thickness"
+        ]
+        if self.require_clinical_ids and not measurement_df.empty:
+            _validate_clinical_ids(measurement_df, frame_name="measurement_df")
+        return calibration_df, measurement_df
+
+    def _append_session_rows(
+        self,
+        *,
+        file_path: Path,
+        session: h5py.Group,
+        session_meta: dict[str, Any],
+        set_allowed: set[str] | None,
+        wanted: str,
+        calibration_rows: list[dict[str, Any]],
+        measurement_rows: list[dict[str, Any]],
+        drop_stats: dict[str, int],
+    ) -> None:
+        sets = session.get("sets")
+        if not isinstance(sets, h5py.Group):
+            return
+        detector_catalog = _session_detector_catalog(session)
+        for set_name in sorted(sets):
+            set_group = sets[set_name]
+            if not isinstance(set_group, h5py.Group):
+                continue
+            category = _set_category(set_group)
+            if not _matches_allowed(category, set_allowed):
+                continue
+            if wanted == "calibration" and category != "CALIBRATION":
+                continue
+            if wanted == "measurement" and category == "CALIBRATION":
+                continue
+            row = self._metadata_row_for_set(
+                file_path=file_path,
+                session_meta=session_meta,
+                set_name=set_name,
+                set_group=set_group,
+                category=category,
+            )
+            if not _row_matches_filters(row, self.measurement_filters):
+                continue
+            if (
+                self.drop_missing_sample_thickness
+                and category != "CALIBRATION"
+                and not _has_valid_sample_thickness(row)
+            ):
+                drop_stats["missing_sample_thickness"] = (
+                    drop_stats.get("missing_sample_thickness", 0) + 1
+                )
+                continue
+            self._load_frame_payload(
+                row=row,
+                file_path=file_path,
+                set_group=set_group,
+                detector_catalog=detector_catalog,
+            )
+            if category == "CALIBRATION":
+                row["cal_name"] = set_name
+                calibration_rows.append(row)
+            else:
+                measurement_rows.append(row)
+
+    def _metadata_row_for_set(
+        self,
+        *,
+        file_path: Path,
+        session_meta: dict[str, Any],
+        set_name: str,
+        set_group: h5py.Group,
+        category: str,
+    ) -> dict[str, Any]:
+        row = {
+            **session_meta,
+            "source_file": str(file_path),
+            "id": set_name,
+            "meas_name": set_name,
+            "set_name": set_name,
+            "set_path": set_group.name,
+            "measurement_type_category": category,
+            **_attrs(set_group),
+        }
+        acquisition = set_group.get("acquisition")
+        if isinstance(acquisition, h5py.Group):
+            row.update(_scalar_fields(acquisition))
+        _standardize_clinical_ids(row)
+        row["sample_thickness_mm"] = _set_sample_thickness_mm(set_group)
+        poni_text = _text_dataset(set_group, "artifacts/poni")
+        if poni_text is not None:
+            row["ponifile"] = poni_text
+            q_min, q_max, distance_m = _poni_q_range_or_nan(str(poni_text))
+            row["poni_q_min_nm_inv"] = q_min
+            row["poni_q_max_nm_inv"] = q_max
+            row["poni_calculated_distance_m"] = distance_m
+        return row
+
+    def _load_frame_payload(
+        self,
+        *,
+        row: dict[str, Any],
+        file_path: Path,
+        set_group: h5py.Group,
+        detector_catalog: dict[int, dict[str, Any]],
+    ) -> None:
+        measurements = _set_measurements(set_group)
+        detector_measurements = []
+        for measurement in measurements:
+            detector_id = measurement.get("detector_id")
+            detector = detector_catalog.get(int(detector_id)) if detector_id else {}
+            detector_measurements.append({**measurement, **detector})
+
+        raw_data = _dataset(set_group, "raw/data")
+        processed_data = _dataset(set_group, "processed/data")
+        normalized_preference = self.data_preference.lower()
+        if normalized_preference == "gfrm":
+            measurement_data, gfrm_metadata = self._load_gfrm_data(
+                file_path=file_path,
+                set_group=set_group,
+                measurements=measurements,
+            )
+            row["measurement_data_source"] = (
+                "embedded_raw_file_gfrm_to_photons"
+                if gfrm_metadata.get("embedded_raw_file")
+                else "gfrm_to_photons"
+            )
+            row["gfrm_path"] = gfrm_metadata.get("source_path")
+            row["gfrm_data"] = measurement_data
+            row["gfrm_conversion_metadata"] = gfrm_metadata
+        elif normalized_preference in {"raw", "container_raw", "fabio"}:
+            measurement_data = raw_data
+            if measurement_data is None:
+                measurement_data = _first_measurement_dataset(set_group, "data")
+            if measurement_data is None:
+                raise ValueError(f"Missing container raw data for set '{row['set_name']}'.")
+            row["measurement_data_source"] = "container_raw_data"
+            row["gfrm_path"] = measurements[0].get("file_path") if measurements else None
+            row["gfrm_conversion_metadata"] = {
+                "source": "container raw/data",
+                "decoder": "container backfill Fabio decode",
+            }
+        else:
+            raise ValueError(
+                "data_preference must be one of: 'gfrm', 'raw', "
+                "'container_raw', 'fabio'."
+            )
+
+        row["measurement_data"] = measurement_data
+        row["raw_data"] = raw_data
+        row["processed_data"] = processed_data
+        integration = _integration_from_set(set_group)
+        if integration is not None:
+            row["q_range"], row["radial_profile_data"] = integration
+        sigma = _dataset(set_group, "integration/sigma")
+        if sigma is not None:
+            row["radial_profile_sigma"] = sigma
+        row["metadata"] = _json_dataset(set_group, "metadata", default={})
+        row["processing_config"] = _processing_config_from_set(set_group)
+        row["detector_measurements"] = detector_measurements
+
+    def _load_gfrm_data(
+        self,
+        *,
+        file_path: Path,
+        set_group: h5py.Group,
+        measurements: list[dict[str, Any]],
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        if not self.convert_gfrm:
+            raise ValueError("Product h5_to_df requires convert_gfrm=True.")
+        gfrm_path = _first_gfrm_path_from_measurements(
+            measurements,
+            container_path=file_path,
+            raw_root=self.raw_root,
+        )
+        if gfrm_path is not None:
+            photons, metadata = gfrm_to_photons(gfrm_path)
+            metadata.update({"source_path": str(gfrm_path)})
+            return photons, metadata
+
+        source_path = measurements[0].get("file_path") if measurements else None
+        raw_file = _first_measurement_dataset(set_group, "raw_file")
+        embedded = _gfrm_to_photons_from_raw_file_bytes(
+            raw_file,
+            str(source_path) if source_path is not None else None,
+        )
+        if embedded is None:
+            raise FileNotFoundError(
+                f"Missing required RAW GFRM artifact for container set "
+                f"'{set_group.name}'."
+            )
+        return embedded
 
 
 def _rows_from_container_reader(
@@ -1200,93 +1538,18 @@ def h5_to_df(
     ``drop_missing_sample_thickness`` excludes measurement sets without positive
     numeric sample thickness before frame loading.
     """
-    file_path = Path(file_path)
-    calibration_rows: list[dict[str, Any]] = []
-    measurement_rows: list[dict[str, Any]] = []
-    drop_stats: dict[str, int] = {"missing_sample_thickness": 0}
-
-    with h5py.File(file_path, "r") as h5:
-        version = _decode(h5.attrs.get("schema_version"))
-        fmt = _decode(h5.attrs.get("format"))
-        if version != "0.3" or fmt not in {"xrd-session", "xrd-session-archive"}:
-            raise ValueError(
-                f"Unsupported container format: schema_version={version!r}, format={fmt!r}"
-            )
-
-    if fmt == "xrd-session":
-        if h5_session_df is None:
-            sessions = filter_h5_sessions(
-                file_path,
-                h5_filters,
-                session_category=session_category,
-                session_started_at_min=session_started_at_min,
-                max_sessions=max_sessions,
-            )
-        else:
-            sessions = filter_h5_session_df(
-                h5_session_df,
-                h5_filters,
-                session_category=session_category,
-                session_started_at_min=session_started_at_min,
-                max_sessions=max_sessions,
-            )
-        if not sessions.empty:
-            calibration_rows, measurement_rows = _rows_from_container_reader(
-                file_path,
-                data_preference=data_preference,
-                raw_root=raw_root,
-                convert_gfrm=convert_gfrm,
-                session_started_at_min=session_started_at_min,
-                set_category=set_category,
-                measurement_filters=measurement_filters,
-                drop_missing_sample_thickness=drop_missing_sample_thickness,
-                drop_stats=drop_stats,
-            )
-    elif fmt == "xrd-session-archive":
-        sessions = _archive_sessions(
-            file_path,
-            h5_filters=h5_filters,
-            h5_session_df=h5_session_df,
-            session_category=session_category,
-            session_started_at_min=session_started_at_min,
-            max_sessions=max_sessions,
-        )
-        with tempfile.TemporaryDirectory(prefix="xrd_preprocessing_h5_") as temp_root:
-            temp_root_path = Path(temp_root)
-            for idx, session_meta in enumerate(sessions, start=1):
-                temp_path = temp_root_path / f"session_{idx:04d}.nxs.h5"
-                _copy_archive_session_to_file(
-                    file_path,
-                    session_meta["archive_session_path"],
-                    temp_path,
-                )
-                cal_rows, meas_rows = _rows_from_container_reader(
-                    temp_path,
-                    data_preference=data_preference,
-                    raw_root=raw_root,
-                    convert_gfrm=convert_gfrm,
-                    session_started_at_min=session_started_at_min,
-                    set_category=set_category,
-                    measurement_filters=measurement_filters,
-                    drop_missing_sample_thickness=drop_missing_sample_thickness,
-                    drop_stats=drop_stats,
-                    archive_meta={
-                        **session_meta,
-                        "source_file": str(file_path),
-                    },
-                )
-                for row in cal_rows + meas_rows:
-                    row["source_file"] = str(file_path)
-                calibration_rows.extend(cal_rows)
-                measurement_rows.extend(meas_rows)
-    else:
-        raise AssertionError(f"Unhandled format: {fmt!r}")
-
-    calibration_df = pd.DataFrame(calibration_rows)
-    measurement_df = pd.DataFrame(measurement_rows)
-    measurement_df.attrs["dropped_missing_sample_thickness"] = drop_stats[
-        "missing_sample_thickness"
-    ]
-    if require_clinical_ids and not measurement_df.empty:
-        _validate_clinical_ids(measurement_df, frame_name="measurement_df")
-    return calibration_df, measurement_df
+    return H5ContainerReader(
+        file_path,
+        data_preference=data_preference,
+        raw_root=raw_root,
+        convert_gfrm=convert_gfrm,
+        require_clinical_ids=require_clinical_ids,
+        drop_missing_sample_thickness=drop_missing_sample_thickness,
+        h5_session_df=h5_session_df,
+        h5_filters=h5_filters,
+        max_sessions=max_sessions,
+        session_category=session_category,
+        session_started_at_min=session_started_at_min,
+        set_category=set_category,
+        measurement_filters=measurement_filters,
+    ).read()

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from ._compat import BaseEstimator, TransformerMixin
+from .filters import ColumnValueFilter
 from .h5 import H5SessionFilter
 
 AGBH_D_SPACING_NM = 5.838
@@ -507,51 +508,61 @@ class AgBHMonochromaticityScorer(TransformerMixin, BaseEstimator):
         return out
 
 
-class AgBHMonochromaticityFilter(TransformerMixin, BaseEstimator):
-    """Filter rows by AgBH monochromaticity score already computed by scorer."""
+class AgBHMonochromaticityFilter(ColumnValueFilter):
+    """Column-value alias for AgBH monochromaticity score filtering."""
 
     def __init__(
         self,
         score_column: str = "agbh_monochromaticity_score",
-        pass_column: str = "agbh_monochromaticity_pass",
         max_score: float = 0.1,
         *,
         drop: bool = True,
         reset_index: bool = True,
     ) -> None:
+        if not drop:
+            raise ValueError(
+                "AgBHMonochromaticityFilter is a ColumnValueFilter alias; "
+                "drop=False is not supported."
+            )
+        super().__init__(
+            score_column,
+            op="<=",
+            value=float(max_score),
+            reset_index=reset_index,
+        )
         self.score_column = score_column
-        self.pass_column = pass_column
         self.max_score = float(max_score)
         self.drop = bool(drop)
-        self.reset_index = bool(reset_index)
-        self.stats_: dict[str, Any] | None = None
 
-    def fit(self, X: pd.DataFrame, y=None):
-        _ = X
-        _ = y
-        return self
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        if self.score_column not in X.columns:
-            raise KeyError(f"Column '{self.score_column}' not found in DataFrame.")
-        out = X.copy()
-        score = pd.to_numeric(out[self.score_column], errors="coerce")
-        passed = np.isfinite(score) & (score <= self.max_score)
-        out[self.pass_column] = passed.to_numpy(dtype=bool)
-        self.stats_ = {
-            "filter_type": "agbh_monochromaticity",
-            "filter_column": self.score_column,
-            "filter_op": "<=",
-            "filter_value": float(self.max_score),
-            "rows_in": int(len(out)),
-            "rows_pass": int(np.sum(passed)),
-            "rows_fail": int(len(out) - np.sum(passed)),
-        }
-        if self.drop:
-            out = out.loc[out[self.pass_column]].copy()
-            if self.reset_index:
-                out.reset_index(drop=True, inplace=True)
-        return out
+def agbh_filter_statistics(
+    before_df: pd.DataFrame,
+    after_df: pd.DataFrame,
+    *,
+    score_column: str = "agbh_monochromaticity_score",
+    max_score: float = 0.1,
+    id_column: str = "sample_id",
+) -> dict[str, Any]:
+    """Return AgBH score-filter audit statistics without mutating DataFrames."""
+    if score_column not in before_df.columns:
+        raise KeyError(f"Column '{score_column}' not found in before_df.")
+    score = pd.to_numeric(before_df[score_column], errors="coerce")
+    finite = score[np.isfinite(score)]
+    failed_ids = []
+    if id_column in before_df.columns:
+        passed = np.isfinite(score) & (score <= float(max_score))
+        failed_ids = before_df.loc[~passed, id_column].astype(str).tolist()
+    return {
+        "filter_type": "agbh_monochromaticity",
+        "score_column": score_column,
+        "max_score": float(max_score),
+        "rows_in": int(len(before_df)),
+        "rows_pass": int(len(after_df)),
+        "rows_fail": int(len(before_df) - len(after_df)),
+        "min_score_observed": float(np.nanmin(finite)) if len(finite) else np.nan,
+        "max_score_observed": float(np.nanmax(finite)) if len(finite) else np.nan,
+        "failed_ids": failed_ids,
+    }
 
 
 class AgBHMonochromaticityQualityControl(TransformerMixin, BaseEstimator):

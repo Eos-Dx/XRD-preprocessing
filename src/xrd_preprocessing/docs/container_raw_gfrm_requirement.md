@@ -20,8 +20,11 @@ only source of detector data.
   - `baseline_adu`;
   - `gain_adu_per_photon`;
   - conversion formula: `(ADU - baseline_adu) / gain_adu_per_photon`;
-  - `negative_pixel_count`;
   - any invalid-row masking, currently row `511`.
+- Preserve diagnostics separately when needed:
+  - `negative_pixel_count`;
+  - `nan_pixel_count`;
+  - finite min/max/mean.
 
 ## Consumer Expectation
 

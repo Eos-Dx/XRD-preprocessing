@@ -6,6 +6,7 @@ from xrd_preprocessing import (
     FaultyPixelDetector,
     create_mask,
     detect_faulty_pixels,
+    faulty_pixel_statistics,
 )
 from xrd_preprocessing.faulty_pixels import (
     _beam_center_pixels,
@@ -88,10 +89,14 @@ def test_faulty_pixel_detector_transform():
         }
     )
     out = FaultyPixelDetector().fit_transform(df)
+    stats = faulty_pixel_statistics(out)
+
     assert out.columns.tolist() == ["measurement_data", "faulty_pixel_mask"]
     assert [2, 1] in out["faulty_pixel_mask"].iloc[0].tolist()
     assert [1, 2] in out["faulty_pixel_mask"].iloc[1].tolist()
     assert [3, 3] in out["faulty_pixel_mask"].iloc[2].tolist()
+    assert stats["n_images"] == 3
+    assert stats["total_faulty_pixels"] == 3
 
 
 def test_find_image_column_fallback_and_errors():
@@ -106,6 +111,11 @@ def test_find_image_column_fallback_and_errors():
 
     with pytest.raises(ValueError, match="No 2D numeric image column"):
         _find_image_column(pd.DataFrame({"bad": ["not-image"]}), "missing")
+
+
+def test_faulty_pixel_detector_requires_configured_image_column():
+    with pytest.raises(KeyError, match="measurement_data"):
+        FaultyPixelDetector().fit_transform(pd.DataFrame({"candidate": [np.ones((2, 2))]}))
 
 
 def test_grouped_faulty_pixels_are_all_detected():
@@ -172,7 +182,7 @@ def test_faulty_pixel_detector_flags_can_disable_detection_rules():
     assert out["faulty_pixel_mask"].iloc[0].tolist() == []
 
 
-def test_beam_center_can_be_excluded_from_poni():
+def test_beam_center_exclusion_requires_explicit_opt_in():
     image = np.ones((9, 9))
     image[4, 4] = -1
     image[1, 1] = -1
@@ -180,9 +190,26 @@ def test_beam_center_can_be_excluded_from_poni():
 Poni1: 0.4
 Poni2: 0.4
 """
+    default = FaultyPixelDetector().fit_transform(
+        pd.DataFrame({"measurement_data": [image], "ponifile": [poni]})
+    )
     out = FaultyPixelDetector(exclude_beam_center_radius=0.2).fit_transform(
         pd.DataFrame({"measurement_data": [image], "ponifile": [poni]})
     )
 
+    assert [4, 4] in default["faulty_pixel_mask"].iloc[0].tolist()
     assert [4, 4] not in out["faulty_pixel_mask"].iloc[0].tolist()
     assert [1, 1] in out["faulty_pixel_mask"].iloc[0].tolist()
+
+
+def test_faulty_pixel_detector_can_use_custom_output_column():
+    image = np.ones((4, 4))
+    image[1, 1] = -1
+
+    out = FaultyPixelDetector(mask_column="mask").fit_transform(
+        pd.DataFrame({"measurement_data": [image]})
+    )
+
+    assert "faulty_pixel_mask" not in out.columns
+    assert [1, 1] in out["mask"].iloc[0].tolist()
+    assert faulty_pixel_statistics(out, mask_column="mask")["total_faulty_pixels"] == 1

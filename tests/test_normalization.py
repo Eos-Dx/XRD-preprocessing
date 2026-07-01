@@ -29,11 +29,23 @@ def test_q_range_normalizer_updates_profile_and_adds_scale_columns():
     out = QRangeNormalizer().fit_transform(df)
 
     assert "radial_profile_data_raw" not in out.columns
-    assert "q_range_normalization_area" in out.columns
+    assert "q_range_normalization_area" not in out.columns
     np.testing.assert_allclose(
         np.trapezoid(out["radial_profile_data"].iloc[0][(q >= 6.7) & (q <= 7.1)], q[(q >= 6.7) & (q <= 7.1)]),
         1.0,
     )
+
+
+def test_q_range_normalizer_can_add_metadata_columns():
+    q = np.linspace(6.0, 8.0, 401)
+    intensity = np.ones_like(q) * 4.0
+    df = pd.DataFrame({"q_range": [q], "radial_profile_data": [intensity]})
+
+    out = QRangeNormalizer(add_metadata_columns=True).fit_transform(df)
+
+    assert "q_range_normalization_area" in out.columns
+    assert out["q_range_normalization_min"].iloc[0] == 6.7
+    assert out["q_range_normalization_max"].iloc[0] == 7.1
 
 
 def test_q_range_normalizer_can_save_initial_profile():
@@ -104,11 +116,25 @@ def test_q_range_value_normalizer_updates_profile_and_adds_value_columns():
 
     out = QRangeValueNormalizer(statistic="median").fit_transform(df)
 
-    assert "q_range_normalization_value" in out.columns
-    assert "q_range_normalization_statistic" in out.columns
+    assert "q_range_normalization_value" not in out.columns
+    assert "q_range_normalization_statistic" not in out.columns
+    np.testing.assert_allclose(out["radial_profile_data"].iloc[0], 1.0)
+
+
+def test_q_range_value_normalizer_can_add_metadata_columns():
+    q = np.linspace(6.0, 8.0, 401)
+    intensity = np.ones_like(q) * 4.0
+    df = pd.DataFrame({"q_range": [q], "radial_profile_data": [intensity]})
+
+    out = QRangeValueNormalizer(
+        statistic="median",
+        add_metadata_columns=True,
+    ).fit_transform(df)
+
     assert out["q_range_normalization_value"].iloc[0] == 4.0
     assert out["q_range_normalization_statistic"].iloc[0] == "median"
-    np.testing.assert_allclose(out["radial_profile_data"].iloc[0], 1.0)
+    assert out["q_range_normalization_min"].iloc[0] == 6.7
+    assert out["q_range_normalization_max"].iloc[0] == 7.1
 
 
 @pytest.mark.parametrize(

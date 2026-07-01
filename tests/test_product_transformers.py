@@ -13,11 +13,11 @@ from xrd_preprocessing import (
     H5SessionSelectorTransformer,
     H5ToDataFrameTransformer,
     JoblibWriterTransformer,
+    KeepColumnsTransformer,
     PairedGroupFilter,
     ProductColumnBuilder,
     ProductStatusGroupFilter,
     RequiredColumnsTransformer,
-    SelectColumnsTransformer,
     SimpleRadialProfileTransformer,
 )
 
@@ -199,20 +199,37 @@ def test_q_range_drop_columns_and_required_columns_transformers():
     assert dropper.dropped_columns_ == ["measurement_data"]
 
 
-def test_select_columns_transformer_keeps_requested_columns_in_order():
+def test_keep_columns_transformer_keeps_requested_columns_in_order():
     df = pd.DataFrame({"a": [1], "b": [2], "c": [3]})
 
-    out = SelectColumnsTransformer(["c", "a"]).fit_transform(df)
+    out = KeepColumnsTransformer(["c", "a"]).fit_transform(df)
 
     assert out.columns.tolist() == ["c", "a"]
     assert out.iloc[0].tolist() == [3, 1]
 
 
-def test_select_columns_transformer_raises_for_missing_columns():
+def test_keep_columns_transformer_raises_for_missing_columns():
     df = pd.DataFrame({"a": [1]})
 
-    with pytest.raises(KeyError, match="Missing selected output columns"):
-        SelectColumnsTransformer(["a", "missing"]).fit_transform(df)
+    with pytest.raises(KeyError, match="Missing kept output columns"):
+        KeepColumnsTransformer(["a", "missing"]).fit_transform(df)
+
+
+def test_keep_columns_transformer_can_ignore_missing_columns():
+    df = pd.DataFrame({"a": [1], "b": [2]})
+
+    out = KeepColumnsTransformer(["a", "missing", "b"], errors="ignore").fit_transform(
+        df
+    )
+
+    assert out.columns.tolist() == ["a", "b"]
+
+
+def test_keep_columns_transformer_rejects_unknown_errors_mode():
+    df = pd.DataFrame({"a": [1]})
+
+    with pytest.raises(ValueError, match="errors must be"):
+        KeepColumnsTransformer(["a"], errors="bad").fit_transform(df)
 
 
 def test_required_columns_transformer_raises_for_invalid_calibrant_thickness():

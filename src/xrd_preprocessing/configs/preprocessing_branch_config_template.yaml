@@ -20,7 +20,7 @@ aramis_preprocessing:
 
 xrd_preprocessing:
   version: local
-  release_tag: v0.1.5-beta
+  release_tag: v0.1.6-beta
 
 # Product wrappers should read input and output paths from config.
 # Relative paths are resolved by the product package against this YAML file.
@@ -112,6 +112,9 @@ labels:
 # One-to-one keeps patient pairs; one-to-many usually keeps individual specimen
 # labels. Concrete products should document the exact level in README/docs.
 branch_settings:
+  # Branch-only extra columns appended to metadata.output_columns with `$concat`.
+  # Example: one-to-one can add one_to_one_pair_type; one-to-many can keep [].
+  output_columns: []
   specimen_status_keep:
     - BENIGN
     - CANCER

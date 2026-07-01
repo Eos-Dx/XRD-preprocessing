@@ -9,10 +9,11 @@ manually parse image bytes with `np.fromfile`.
 ## API
 
 ```python
-from xrd_preprocessing import decode_gfrm, gfrm_to_photons
+from xrd_preprocessing import decode_gfrm, gfrm_photon_statistics, gfrm_to_photons
 
 adu, header = decode_gfrm("frame.gfrm")
 photons, metadata = gfrm_to_photons("frame.gfrm")
+stats = gfrm_photon_statistics(photons, metadata)
 ```
 
 ## Steps
@@ -56,7 +57,8 @@ photons = (adu - 64.0) / 41.5045612244898
 ```
 
 Negative values are preserved. Row `511` is masked as `NaN` by product default
-via `mask_bad_row=True`.
+via `mask_bad_row=True`. Pixel counts and other diagnostics are not written by
+conversion; call `gfrm_photon_statistics(photons, metadata)` explicitly.
 
 FabIO returns decoded detector counts. It does not apply our EOS photon
 normalization convention. The EOS photon image is an estimate based on Bruker
@@ -153,8 +155,18 @@ shape
 dtype
 mask_bad_row
 masked_row_511
-negative_pixel_count
 header
+```
+
+Explicit statistics from `gfrm_photon_statistics()` include:
+
+```text
+negative_pixel_count
+nan_pixel_count
+finite_pixel_count
+min
+max
+mean
 ```
 
 ## Out of Scope

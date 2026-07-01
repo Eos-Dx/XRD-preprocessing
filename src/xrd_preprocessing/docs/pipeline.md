@@ -48,7 +48,7 @@ from xrd_preprocessing import (
     ProductStatusGroupFilter,
     PairedGroupFilter,
     ConstantQRangeTransformer,
-    DropColumnsTransformer,
+    KeepColumnsTransformer,
 )
 ```
 
@@ -90,6 +90,13 @@ keeps multiple branches in one file. Use
 `preprocessing_branch_config_template.yaml` for the current Aramis style: one
 concrete YAML per product branch with branch-specific rules under
 `branch_settings`.
+
+YAML pipelines can resolve config values with `$ref`, append resolved lists
+with `$concat`, and conditionally skip steps or nested parameter entries with
+`enabled`. `extends` may be one YAML file or an ordered list of YAML files;
+later files override earlier files. This lets product configs keep separate
+fragments for policy, transformer order, output schema, quality exclusions,
+and cohort rules. Pipeline step names must be unique.
 
 Optional product cohort fields such as `filters.require_biopsy` and
 `filters.biopsy_column` belong in the concrete product YAML. Product code may
@@ -402,7 +409,7 @@ What happens:
 ```text
 each photon image is checked for invalid or saturated pixels
 a row-specific pyFAI mask is created
-beam-zone pixels are excluded from faulty statistics
+beam-zone pixels are excluded only when exclude_beam_center_radius is set
 ```
 
 Why:
@@ -550,7 +557,8 @@ snr_method_used
 What happens:
 
 ```text
-rows with snr_db < 20 or missing SNR are removed
+rows with finite snr_db < 20 are removed
+missing or invalid SNR fails earlier in SNRTransformer
 ```
 
 Why:

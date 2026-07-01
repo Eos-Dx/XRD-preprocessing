@@ -192,7 +192,7 @@ def validate_gfrm_array(
     metadata: dict[str, Any],
     gfrm_path: str | Path,
 ) -> list[str]:
-    """Validate decoded GFRM array and return non-fatal warnings."""
+    """Validate decoded GFRM array."""
     path = Path(gfrm_path)
     if not isinstance(array, np.ndarray):
         raise TypeError(f"Decoded GFRM data is not a NumPy array: {path!s}")
@@ -208,15 +208,14 @@ def validate_gfrm_array(
     ncols = metadata.get("ncols")
     if nrows and ncols and array.shape != (nrows, ncols):
         if array.shape == (ncols, nrows):
-            warnings.append(
+            raise ValueError(
                 f"Decoded shape {array.shape} is transposed versus header "
                 f"({nrows}, {ncols})."
             )
-        else:
-            warnings.append(
-                f"Decoded shape {array.shape} does not match header "
-                f"({nrows}, {ncols})."
-            )
+        raise ValueError(
+            f"Decoded shape {array.shape} does not match header "
+            f"({nrows}, {ncols})."
+        )
     return warnings
 
 
@@ -269,8 +268,6 @@ def gfrm_to_photons(
     masked_row_511 = bool(mask_bad_row and photons.shape[0] > 511)
     if masked_row_511:
         photons[511, :] = np.nan
-    negative_pixel_count = int(np.sum(photons < 0))
-
     metadata = {
         **conversion_metadata,
         "source_file": str(gfrm_path),
@@ -286,10 +283,39 @@ def gfrm_to_photons(
         "LINEAR": header.get("LINEAR"),
         "mask_bad_row": bool(mask_bad_row),
         "masked_row_511": masked_row_511,
-        "negative_pixel_count": negative_pixel_count,
         "header": header,
     }
     return photons, metadata
+
+
+def gfrm_photon_statistics(
+    photons: np.ndarray,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return explicit diagnostics for an EOS photon image."""
+    array = np.asarray(photons)
+    finite = array[np.isfinite(array)]
+    stats: dict[str, Any] = {
+        "shape": tuple(array.shape),
+        "dtype": str(array.dtype),
+        "negative_pixel_count": int(np.sum(array < 0)),
+        "nan_pixel_count": int(np.sum(np.isnan(array))),
+        "finite_pixel_count": int(finite.size),
+        "min": float(np.min(finite)) if finite.size else None,
+        "max": float(np.max(finite)) if finite.size else None,
+        "mean": float(np.mean(finite)) if finite.size else None,
+    }
+    if metadata is not None:
+        stats.update(
+            {
+                "source_path": metadata.get("source_path"),
+                "fabio_class": metadata.get("fabio_class"),
+                "baseline_adu": metadata.get("baseline_adu"),
+                "gain_adu_per_photon": metadata.get("gain_adu_per_photon"),
+                "masked_row_511": metadata.get("masked_row_511"),
+            }
+        )
+    return stats
 
 
 def save_gfrm_as_npy(
@@ -298,7 +324,7 @@ def save_gfrm_as_npy(
     *,
     mask_bad_row: bool = True,
 ) -> tuple[np.ndarray, Path, dict[str, Any]]:
-    """Convert GFRM to photons and save the resulting NumPy array."""
+    """Convert GFRM to photons and explicitly save a NumPy materialization."""
     gfrm_path = Path(gfrm_path)
     if npy_path is None:
         npy_path = gfrm_path.with_name(f"{gfrm_path.stem}_photons.npy")
@@ -316,7 +342,7 @@ def save_gfrm_as_npy(
 def read_gfrm_as_photons(
     gfrm_path: str | Path,
     *,
-    save: bool = True,
+    save: bool = False,
     npy_path: str | Path | None = None,
     mask_bad_row: bool = True,
 ) -> tuple[np.ndarray, Path | None, dict[str, Any]]:

@@ -11,8 +11,9 @@ Core scope:
 - AgBH monochromaticity QC scoring from calibration profiles
 - reusable metadata and SNR row filters
 - sklearn-style product transformers for H5 reading, product metadata columns,
-  paired-group filters, q-range metadata, and payload-column dropping
-- reusable preprocessing YAML template/contract and loader API
+  paired-group filters, q-range metadata, and final column selection
+- reusable preprocessing YAML template/contract, loader API, and YAML pipeline
+  builder
 
 Standard product preprocessing order:
 
@@ -35,6 +36,12 @@ Product preprocessing requires container v0.3 with original RAW GFRM artifacts.
 `measurement_data` is produced from `gfrm_to_photons`; stored NumPy arrays are
 not the product source of truth.
 
+Detailed module docs start at:
+
+```text
+src/xrd_preprocessing/docs/README.md
+```
+
 Thickness contract:
 
 ```text
@@ -49,7 +56,7 @@ product-specific AGBH/HBH reliability policy lives outside xrd_preprocessing
 Transformer contract:
 
 ```text
-v0.1.5-beta product movement should be expressed as transformers
+v0.1.6-beta product movement should be expressed as transformers
 every DataFrame-changing product step should support fit_transform
 H5SessionSelectorTransformer returns a manifest with archive_path, all_session_df, selected session_df, and h5_filters
 H5MeasurementSetAuditTransformer adds stage count DataFrames without loading detector arrays
@@ -58,7 +65,46 @@ functions remain available for low-level direct use and backward compatibility
 XRD-preprocessing owns reusable YAML templates/contracts
 product repositories own concrete YAML/JSON rules and compose XRD-preprocessing transformers
 load_preprocessing_config(...) validates concrete configs against the reusable contract
+build_pipeline_from_config(...) builds sklearn Pipeline from YAML pipeline.steps
 ```
+
+Statistics contract:
+
+```text
+transformers may keep internal stats_ for sklearn-style inspection
+human/product audit reports should prefer explicit statistics helpers
+examples: faulty_pixel_statistics, snr_filter_statistics, agbh_filter_statistics,
+gfrm_photon_statistics, h5_filter_statistics
+```
+
+YAML pipeline contract:
+
+```yaml
+pipeline:
+  steps:
+    - name: h5_to_df
+      transformer: H5ToDataFrameTransformer
+      params:
+        data_preference:
+          $ref: raw_data.source
+    - name: keep_columns
+      transformer: KeepColumnsTransformer
+      params:
+        columns:
+          $concat:
+            - $ref: metadata.output_columns
+            - $ref: branch_settings.output_columns
+```
+
+Each `transformer` must be in the explicit XRD-preprocessing transformer
+registry. Products can add, remove, disable, or reorder product steps in YAML
+without hardcoding the route in product code. `$ref` resolves values from the
+loaded config after `extends` is merged. `extends` can be one YAML file or an
+ordered list of YAML files; later files override earlier files. `$concat`
+appends resolved lists and scalars; use it when a shared base owns common
+output columns and a branch adds only branch-specific columns. Any step or
+nested parameter item can define `enabled: false` or
+`enabled: {$ref: some.boolean.flag}`. Step names must be unique.
 
 Transformer module layout:
 

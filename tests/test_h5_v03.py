@@ -10,6 +10,7 @@ sys.path.insert(0, "/Users/sad/dev/container/src")
 sys.path.insert(0, "/Users/sad/dev/container/tests/v0_3")
 
 from xrd_preprocessing import (  # noqa: E402
+    H5ContainerReader,
     H5SessionFilter,
     calibrant_thickness_h5_filters,
     filter_h5_session_df,
@@ -248,6 +249,52 @@ def test_h5_to_df_reads_combined_archive_sessions(tmp_path):
     assert row["patientId"] == "PAT001"
     assert row["specimenId"] == "PAT001-S01"
     np.testing.assert_array_equal(row["measurement_data"], raw)
+
+
+def test_h5_container_reader_reads_archive_without_temp_copy(
+    monkeypatch,
+    tmp_path,
+):
+    pytest.importorskip("container.v0_3")
+    from _factory_v0_3 import make_measurement, make_session, make_set
+    from container.v0_3 import build_session_container
+    import xrd_preprocessing.h5 as h5_module
+
+    raw = np.arange(16, dtype=np.float32).reshape(4, 4)
+    measurement = make_measurement(file_path="sample.gfrm", data=raw)
+    _, _, session_path = build_session_container(
+        make_session(sets=[make_set(measurements=[measurement], raw=raw)]),
+        tmp_path / "container",
+    )
+    archive_path = tmp_path / "combined_archive.h5"
+    with h5py.File(session_path, "r") as src, h5py.File(archive_path, "w") as dst:
+        dst.attrs["schema_version"] = "0.3"
+        dst.attrs["format"] = "xrd-session-archive"
+        group = dst.create_group("calib_test")
+        src.copy(src["session"], group, name="sample_01_PAT001")
+        for key, value in src.attrs.items():
+            group["sample_01_PAT001"].attrs[key] = value
+
+    monkeypatch.setattr(
+        h5_module,
+        "_copy_archive_session_to_file",
+        lambda *_args, **_kwargs: pytest.fail("archive session was temp-copied"),
+    )
+
+    reader = H5ContainerReader(
+        archive_path,
+        data_preference="raw",
+        session_category="SAMPLE",
+        set_category="SAMPLE",
+    )
+    session_df = reader.read_to_session_df()
+    meas_df = reader.read_to_measurement_df()
+    typo_session_df = reader.read_to_serssion_df()
+
+    assert session_df["archive_session_name"].tolist() == ["sample_01_PAT001"]
+    assert typo_session_df["archive_session_name"].tolist() == ["sample_01_PAT001"]
+    assert len(meas_df) == 1
+    np.testing.assert_array_equal(meas_df.iloc[0]["measurement_data"], raw)
 
 
 def test_calibrant_thickness_h5_filters():

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
-from functools import cache
+from functools import lru_cache
 from typing import Any
 import warnings
 
@@ -12,33 +13,6 @@ import pandas as pd
 
 from ._compat import BaseEstimator, TransformerMixin
 from .faulty_pixels import create_mask
-
-
-def _row_values(
-    values: Any,
-    *,
-    n_rows: int,
-    name: str,
-) -> list[float] | None:
-    if values is None:
-        return None
-    if isinstance(values, str):
-        raise TypeError(f"{name} must be numeric or a sequence of numeric values.")
-    if np.isscalar(values):
-        numeric = float(values)
-        if not np.isfinite(numeric):
-            raise ValueError(f"{name} must contain finite numeric values.")
-        return [numeric] * n_rows
-    array = np.asarray(values, dtype=float)
-    if array.ndim != 1:
-        raise ValueError(f"{name} must be a one-dimensional sequence.")
-    if len(array) != n_rows:
-        raise ValueError(
-            f"{name} length must match input rows: {len(array)} != {n_rows}."
-        )
-    if not np.all(np.isfinite(array)):
-        raise ValueError(f"{name} must contain finite numeric values.")
-    return array.tolist()
 
 
 def _pyfai():
@@ -74,7 +48,7 @@ def _integrator_from_dataframe(
     return ai
 
 
-@cache
+@lru_cache(maxsize=128)
 def _integrator_from_poni_text(poni_text: str):
     import os
     import tempfile
@@ -87,6 +61,22 @@ def _integrator_from_poni_text(poni_text: str):
         return pyFAI.load(path)
     finally:
         os.unlink(path)
+
+
+def _copy_integrator_from_poni_text(poni_text: str):
+    return copy.deepcopy(_integrator_from_poni_text(poni_text))
+
+
+def _adjust_integrator_distance(
+    ai,
+    sample_thickness_mm: float,
+    reference_thickness_mm: float = 0.0,
+) -> float:
+    adjusted = float(ai.dist) - 0.5 * (
+        float(sample_thickness_mm) - float(reference_thickness_mm)
+    ) * 1e-3
+    ai.set_dist(float(adjusted))
+    return float(adjusted)
 
 
 def _adjust_poni_distance(
@@ -119,20 +109,22 @@ def estimate_poni_q_range_nm_inv(
     thickness_reference_mm: float = 0.0,
 ) -> tuple[float, float, float]:
     """Estimate available q range from PONI geometry without integrating image data."""
-    adjusted_poni = str(poni_text)
     if sample_thickness_mm is not None:
-        adjusted_poni, _ = _adjust_poni_distance(
-            adjusted_poni,
+        ai = _copy_integrator_from_poni_text(str(poni_text))
+        adjusted_distance = _adjust_integrator_distance(
+            ai,
             sample_thickness_mm=float(sample_thickness_mm),
             reference_thickness_mm=float(thickness_reference_mm),
         )
-    ai = _integrator_from_poni_text(adjusted_poni)
+    else:
+        ai = _integrator_from_poni_text(str(poni_text))
+        adjusted_distance = float(ai.dist)
     q_array = ai.qArray(shape) if shape is not None else ai.qArray()
     finite_q = np.asarray(q_array, dtype=float)
     finite_q = finite_q[np.isfinite(finite_q)]
     if finite_q.size == 0:
         raise ValueError("PONI geometry produced no finite q values.")
-    return float(np.nanmin(finite_q)), float(np.nanmax(finite_q)), float(ai.dist)
+    return float(np.nanmin(finite_q)), float(np.nanmax(finite_q)), adjusted_distance
 
 
 def _thickness_metadata(
@@ -329,25 +321,14 @@ def _perform_azimuthal_integration_with_metadata(
             thickness_meta["thickness_adjusted_distance_m"] = float(adjusted_distance_m)
     elif calibration_mode == "poni":
         poni_text = str(row["ponifile"])
+        ai = _copy_integrator_from_poni_text(poni_text)
         if sample_thickness is not None:
-            poni_text, adjusted_distance_m = _adjust_poni_distance(
-                poni_text,
+            adjusted_distance_m = _adjust_integrator_distance(
+                ai,
                 sample_thickness,
                 float(thickness_meta["thickness_reference_mm"]),
             )
-            if adjusted_distance_m is None:
-                message = "PONI Distance field missing; thickness adjustment was not applied."
-                warnings.warn(message, RuntimeWarning, stacklevel=3)
-                thickness_meta.update(
-                    {
-                        "thickness_adjustment_applied": False,
-                        "thickness_adjustment_reliable": False,
-                        "thickness_adjustment_warning": message,
-                    }
-                )
-            else:
-                thickness_meta["thickness_adjusted_distance_m"] = float(adjusted_distance_m)
-        ai = _integrator_from_poni_text(poni_text)
+            thickness_meta["thickness_adjusted_distance_m"] = float(adjusted_distance_m)
     else:
         raise ValueError("calibration_mode must be 'dataframe' or 'poni'")
 
@@ -461,8 +442,7 @@ class AzimuthalIntegration(TransformerMixin, BaseEstimator):
     error_model: str | None = None
     thickness_adjustment: bool = True
     require_thickness_adjustment: bool = True
-    sample_thickness_mm: Any = None
-    thickness_reference_mm: Any = None
+    thickness_reference_mm: float | None = None
     thickness_reference_column: str | None = None
     sample_thickness_column: str = "sample_thickness_mm"
 
@@ -474,26 +454,15 @@ class AzimuthalIntegration(TransformerMixin, BaseEstimator):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.copy()
         sample_thickness_column = self.sample_thickness_column
-        sample_thickness_values = _row_values(
-            self.sample_thickness_mm,
-            n_rows=len(out),
-            name="sample_thickness_mm",
-        )
-        if sample_thickness_values is not None:
-            sample_thickness_column = "sample_thickness_mm"
-            out[sample_thickness_column] = sample_thickness_values
-
         thickness_reference_mm = self.thickness_reference_mm
         thickness_reference_column = self.thickness_reference_column
-        reference_values = _row_values(
-            self.thickness_reference_mm,
-            n_rows=len(out),
-            name="thickness_reference_mm",
-        )
-        if reference_values is not None and not np.isscalar(self.thickness_reference_mm):
-            thickness_reference_mm = None
-            thickness_reference_column = "thickness_reference_mm"
-            out[thickness_reference_column] = reference_values
+        if thickness_reference_mm is not None and not np.isscalar(
+            thickness_reference_mm
+        ):
+            raise TypeError(
+                "thickness_reference_mm must be a scalar constant. "
+                "Use thickness_reference_column for row-level values."
+            )
 
         mask = self.mask
         if mask is None and self.faulty_pixels is not None:

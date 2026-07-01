@@ -48,11 +48,14 @@ def _():
         RadialProfileSnapshot,
         SNRFilter,
         SNRTransformer,
+        faulty_pixel_statistics,
+        snr_filter_statistics,
     )
 
     return (
         AzimuthalIntegration,
         FaultyPixelDetector,
+        faulty_pixel_statistics,
         PatientSpecimenValidityFilter,
         Pipeline,
         QRangeNormalizer,
@@ -64,6 +67,7 @@ def _():
         pd,
         plt,
         repo_root,
+        snr_filter_statistics,
     )
 
 
@@ -145,13 +149,13 @@ def _(input_df, mo, thickness_reference_mm):
 
 
 @app.cell
-def _(FaultyPixelDetector, input_df):
+def _(FaultyPixelDetector, faulty_pixel_statistics, input_df):
     faulty_detector = FaultyPixelDetector(
         bright_pixel_min_value=500.0,
         exclude_beam_center_radius=0.04,
     )
     faulty_df = faulty_detector.fit_transform(input_df)
-    faulty_stats = faulty_detector.stats_
+    faulty_stats = faulty_pixel_statistics(faulty_df)
     return faulty_df, faulty_stats
 
 
@@ -169,7 +173,6 @@ def _(faulty_df, faulty_stats, helpers, mo):
 
                 ```text
                 total_faulty_pixels = {faulty_stats["total_faulty_pixels"]}
-                beam_center_radius_frac = {faulty_stats["beam_center_radius_frac"]}
                 ```
                 """
             ),
@@ -244,10 +247,10 @@ def _(helpers, mo, snr_df):
 
 
 @app.cell
-def _(SNRFilter, snr_df):
+def _(SNRFilter, snr_df, snr_filter_statistics):
     snr_filter = SNRFilter(min_snr_db=20.0)
     snr_filtered_df = snr_filter.fit_transform(snr_df)
-    snr_filter_stats = snr_filter.stats_
+    snr_filter_stats = snr_filter_statistics(snr_df, snr_filtered_df)
     return snr_filter_stats, snr_filtered_df
 
 
@@ -264,7 +267,8 @@ def _(helpers, mo, snr_filter_stats, snr_filtered_df):
                 f"""
                 Step 5. SNR filtering.
 
-                Curves with `snr_db < 20` or missing SNR are removed.
+                Curves with finite `snr_db < 20` are removed.
+                Missing or invalid SNR fails earlier in `SNRTransformer`.
 
                 ```text
                 rows_in = {snr_filter_stats["rows_in"]}
@@ -456,14 +460,12 @@ def _(
         ]
     )
     full_pipeline_df = product_pipeline.fit_transform(input_df)
-    full_pipeline_stats = product_pipeline.named_steps["snr_filter"].stats_
     full_pipeline_clinical_stats = product_pipeline.named_steps[
         "clinical_validity"
     ].stats_
     return (
         full_pipeline_clinical_stats,
         full_pipeline_df,
-        full_pipeline_stats,
         product_pipeline,
         save_pipeline_stages,
     )
@@ -473,7 +475,6 @@ def _(
 def _(
     full_pipeline_clinical_stats,
     full_pipeline_df,
-    full_pipeline_stats,
     helpers,
     mo,
     save_pipeline_stages,
@@ -500,8 +501,6 @@ def _(
 
                 ```text
                 save_pipeline_stages = {save_pipeline_stages}
-                rows before SNRFilter = {full_pipeline_stats["rows_in"]}
-                rows removed by SNRFilter = {full_pipeline_stats["rows_fail"]}
                 rows before clinical validity = {full_pipeline_clinical_stats["rows_in"]}
                 rows removed by clinical validity = {full_pipeline_clinical_stats["rows_fail"]}
                 output rows = {len(full_pipeline_df)}
