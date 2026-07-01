@@ -291,8 +291,7 @@ def test_joblib_writer_can_store_preprocessing_artifact(tmp_path):
         artifact=True,
         preprocessing_config=config,
         preprocessing_config_text="preprocessing:\n  version: test\n",
-        preprocessing_config_path="config/preprocessing.yaml",
-        metadata={"input_h5_path": "input.h5"},
+        metadata={"input_h5_sha256": "abc"},
     )
 
     out = writer.fit_transform(df)
@@ -301,9 +300,8 @@ def test_joblib_writer_can_store_preprocessing_artifact(tmp_path):
     pd.testing.assert_frame_equal(out, df)
     assert loaded["kind"] == "xrd_preprocessing_dataframe"
     assert loaded["preprocessing_config"] == config
-    assert loaded["preprocessing_config_path"] == "config/preprocessing.yaml"
     assert loaded["preprocessing_config_sha256"]
-    assert loaded["metadata"]["input_h5_path"] == "input.h5"
+    assert loaded["metadata"]["input_h5_sha256"] == "abc"
     pd.testing.assert_frame_equal(
         load_preprocessing_dataframe(tmp_path / "artifact.joblib"),
         df,

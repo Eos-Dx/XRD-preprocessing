@@ -21,7 +21,6 @@ def build_preprocessing_artifact(
     *,
     preprocessing_config: dict[str, Any] | None = None,
     preprocessing_config_text: str | None = None,
-    preprocessing_config_path: str | Path | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a portable preprocessing artifact containing data and config."""
@@ -36,9 +35,6 @@ def build_preprocessing_artifact(
         "dataframe": dataframe,
         "preprocessing_config": preprocessing_config,
         "preprocessing_config_text": config_text,
-        "preprocessing_config_path": (
-            str(preprocessing_config_path) if preprocessing_config_path is not None else None
-        ),
         "preprocessing_config_sha256": (
             sha256(config_text.encode("utf-8")).hexdigest()
             if config_text is not None
@@ -55,7 +51,6 @@ def save_preprocessing_artifact(
     *,
     preprocessing_config: dict[str, Any] | None = None,
     preprocessing_config_text: str | None = None,
-    preprocessing_config_path: str | Path | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write a preprocessing artifact joblib and return the written object."""
@@ -63,7 +58,6 @@ def save_preprocessing_artifact(
         dataframe,
         preprocessing_config=preprocessing_config,
         preprocessing_config_text=preprocessing_config_text,
-        preprocessing_config_path=preprocessing_config_path,
         metadata=metadata,
     )
     path = Path(output_path)

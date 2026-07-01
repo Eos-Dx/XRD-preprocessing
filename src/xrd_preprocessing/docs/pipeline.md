@@ -121,7 +121,6 @@ plain `joblib.dump(df, path)`. The artifact contains:
 dataframe
 preprocessing_config          resolved/effective YAML config
 preprocessing_config_text     original YAML text supplied by the user
-preprocessing_config_path
 preprocessing_config_sha256
 metadata
 ```

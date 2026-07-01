@@ -289,14 +289,12 @@ class JoblibWriterTransformer(TransformerMixin, BaseEstimator):
         artifact: bool = False,
         preprocessing_config: dict[str, Any] | None = None,
         preprocessing_config_text: str | None = None,
-        preprocessing_config_path: str | Path | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.output_path = output_path
         self.artifact = artifact
         self.preprocessing_config = preprocessing_config
         self.preprocessing_config_text = preprocessing_config_text
-        self.preprocessing_config_path = preprocessing_config_path
         self.metadata = metadata
         self.output_path_: Path | None = None
         self.stats_: dict[str, Any] | None = None
@@ -316,7 +314,6 @@ class JoblibWriterTransformer(TransformerMixin, BaseEstimator):
                     output_path,
                     preprocessing_config=self.preprocessing_config,
                     preprocessing_config_text=self.preprocessing_config_text,
-                    preprocessing_config_path=self.preprocessing_config_path,
                     metadata=self.metadata,
                 )
             else:
