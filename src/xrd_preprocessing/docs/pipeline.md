@@ -113,6 +113,22 @@ These paths let a product command run from a single config file, for example
 `python -m aramis preprocess --config ...`. Relative paths are resolved by the
 product package that owns the concrete YAML.
 
+When preprocessing writes joblib output, product code should prefer
+`save_preprocessing_artifact` or `JoblibWriterTransformer(artifact=True)` over
+plain `joblib.dump(df, path)`. The artifact contains:
+
+```text
+dataframe
+preprocessing_config          resolved/effective YAML config
+preprocessing_config_text     original YAML text supplied by the user
+preprocessing_config_path
+preprocessing_config_sha256
+metadata
+```
+
+Use `load_preprocessing_dataframe(path)` when downstream code needs only the
+DataFrame. It also reads legacy DataFrame-only joblibs.
+
 Product repositories should keep their concrete configs in the product repo,
 then load and validate them with:
 

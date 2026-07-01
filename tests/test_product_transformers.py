@@ -277,3 +277,34 @@ def test_h5_blob_simple_radial_profile_and_joblib_writer(tmp_path):
     assert out["measurement_data"].iloc[0].shape == (16, 16)
     assert len(out["q_range"].iloc[0]) == 12
     pd.testing.assert_frame_equal(out, loaded)
+
+
+def test_joblib_writer_can_store_preprocessing_artifact(tmp_path):
+    import joblib
+
+    from xrd_preprocessing import load_preprocessing_dataframe
+
+    df = pd.DataFrame({"a": [1, 2]})
+    config = {"preprocessing": {"version": "test"}, "pipeline": {"steps": []}}
+    writer = JoblibWriterTransformer(
+        tmp_path / "artifact.joblib",
+        artifact=True,
+        preprocessing_config=config,
+        preprocessing_config_text="preprocessing:\n  version: test\n",
+        preprocessing_config_path="config/preprocessing.yaml",
+        metadata={"input_h5_path": "input.h5"},
+    )
+
+    out = writer.fit_transform(df)
+    loaded = joblib.load(tmp_path / "artifact.joblib")
+
+    pd.testing.assert_frame_equal(out, df)
+    assert loaded["kind"] == "xrd_preprocessing_dataframe"
+    assert loaded["preprocessing_config"] == config
+    assert loaded["preprocessing_config_path"] == "config/preprocessing.yaml"
+    assert loaded["preprocessing_config_sha256"]
+    assert loaded["metadata"]["input_h5_path"] == "input.h5"
+    pd.testing.assert_frame_equal(
+        load_preprocessing_dataframe(tmp_path / "artifact.joblib"),
+        df,
+    )

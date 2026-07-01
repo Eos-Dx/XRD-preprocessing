@@ -6,11 +6,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
 
 from .._compat import BaseEstimator, TransformerMixin
+from ..artifacts import save_preprocessing_artifact
 
 
 class ProductColumnBuilder(TransformerMixin, BaseEstimator):
@@ -280,10 +280,24 @@ class RequiredColumnsTransformer(TransformerMixin, BaseEstimator):
 
 
 class JoblibWriterTransformer(TransformerMixin, BaseEstimator):
-    """Write a DataFrame to joblib and return it unchanged."""
+    """Write a DataFrame or preprocessing artifact to joblib."""
 
-    def __init__(self, output_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        output_path: str | Path | None = None,
+        *,
+        artifact: bool = False,
+        preprocessing_config: dict[str, Any] | None = None,
+        preprocessing_config_text: str | None = None,
+        preprocessing_config_path: str | Path | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         self.output_path = output_path
+        self.artifact = artifact
+        self.preprocessing_config = preprocessing_config
+        self.preprocessing_config_text = preprocessing_config_text
+        self.preprocessing_config_path = preprocessing_config_path
+        self.metadata = metadata
         self.output_path_: Path | None = None
         self.stats_: dict[str, Any] | None = None
 
@@ -296,11 +310,24 @@ class JoblibWriterTransformer(TransformerMixin, BaseEstimator):
         if self.output_path is not None:
             output_path = Path(self.output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            joblib.dump(X, output_path)
+            if self.artifact:
+                save_preprocessing_artifact(
+                    X,
+                    output_path,
+                    preprocessing_config=self.preprocessing_config,
+                    preprocessing_config_text=self.preprocessing_config_text,
+                    preprocessing_config_path=self.preprocessing_config_path,
+                    metadata=self.metadata,
+                )
+            else:
+                import joblib
+
+                joblib.dump(X, output_path)
             self.output_path_ = output_path
         self.stats_ = {
             "filter_type": "joblib_writer",
             "rows": int(len(X)),
+            "artifact": bool(self.artifact),
             "output_path": str(self.output_path_) if self.output_path_ else None,
         }
         return X
